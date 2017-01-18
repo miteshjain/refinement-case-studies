@@ -1,1734 +1,1957 @@
+(in-package "ACL2S")
+(include-book "string-order" :ttags :all)
+(include-book "defunbc" :ttags :all)
+(include-book "higher-order" :ttags :all)
+
+;; Data definitions for DES, a Discrete-Event Simulation system
+
+;; Time is an integer
+(defdata time nat)
+
+;; An event is a string (any type will do)
+(defdata event string)
+
+;; A timed-event is record consisting of a time and an event.
+(defdata timed-event
+  (record (tm . time)
+          (ev . event)))
+
+;; A list of timed-events
+(defdata lo-te (listof timed-event))
+
+;; A memory maps a global variable (var) to a value (integer)
+(defdata memory (alistof var integer))
+
+;; A state of the DES consists of the current time, the list of
+;; timed-events to execute and the memory.
+(defdata des-state
+  (record (tm . time)
+          (tevs . lo-te)
+          (mem . memory)))
+
+;; To avoid having to type acl2:: in front of set-equiv
+(defabbrev set-equiv (a b)
+  (acl2::set-equiv a b))
+
+(add-macro-fn set-equiv acl2::set-equiv)
+
+;; The definition of des-state equality. The timed events are a set,
+;; so we have to compare them using set equality. The memory is also a
+;; set of variable, value pairs, so we also treat it as a set.
+(defunbc des-state-equal (s w)
+  :input-contract t
+  (or (equal s w)
+      (and (des-statep s)
+           (des-statep w)
+           (equal (des-state-tm s)
+                  (des-state-tm w))
+           (set-equiv (des-state-mem s)
+                      (des-state-mem w))
+           (set-equiv (des-state-tevs s)
+                      (des-state-tevs w)))))
+
+(defequiv des-state-equal)
+
+(defcong des-state-equal equal (des-state-tm x) 1)
+(defcong des-state-equal equal (des-state-tevs x) 1)
+(defcong des-state-equal set-equiv (des-state-mem x) 1)
+
+(defdata lob (listof boolean))
+(create-reduce* and booleanp lobp)
+(create-reduce* or booleanp lobp)
+
+(create-map* (lambda (te tm) (>= (timed-event-tm te) tm))
+             lo-tep
+             lobp
+             (:fixed-vars ((timep tm))))
+
+(defunbc valid-lo-tevs-high (tevs time)
+  "Checks if the list of timed events is valid: all events in tevs are
+   scheduled to execute at a time >= to time" 
+  :input-contract (and (lo-tep tevs) (timep time))
+  (reduce* and t
+           (map* (lambda (te tm) (>= (timed-event-tm te) tm)) tevs time)))
+
+(defunbc valid-lo-tevs (tevs time)
+  "Checks if the list of timed events is valid: all events in tevs are
+   scheduled to execute at a time >= to time" 
+  :input-contract (and (lo-tep tevs) (timep time))
+  (if (endp tevs)
+      t
+    (and (>= (timed-event-tm (car tevs)) time)
+         (valid-lo-tevs (cdr tevs) time))))
+
+(defthmd valid-lo-tevs-equiv
+  (implies (and (lo-tep tevs) (timep time))
+           (equal (valid-lo-tevs tevs time)
+                  (valid-lo-tevs-high tevs time))))
+
+;; The execution of an event is modeled as an uninterpreted function
+;; execute-event. It takes the current time and the current memory as
+;; input and returns an updated memory and a list of new events that
+;; are scheduled to be executed at some time > tm. The new events are
+;; added into Sch.
 
 (encapsulate
- ()
- (local (include-book "std/osets/membership" :dir :system))
- (in-theory (enable get-event get-event-time acl2::<< natp acl2::lexorder alphorder e-<))
+ (((step-events * * *) => *)
+  ((step-memory  * * *) => *))
  
- (local (defthm l1
-        (implies (and (pairp p1) (pairp p2)
-                      (e-< p1 p2))
-                 (acl2::<< p1 p2))))
+ (local (defun step-events (ev tm mem)
+          (declare (ignore ev tm mem))
+          nil))
 
- (local
-  (defthm l2
-    (implies (and (lofpp x) (orderedp x))
-             (set::setp x))
-    :hints (("goal" :induct (orderedp x)
-             :in-theory (enable set::setp)))))
+ (local (defun step-memory (ev tm mem)
+          (declare (ignore ev tm mem))
+          nil))
 
- (local
-  (defthm l3
-   (implies (set::setp X)
-            (iff (acl2::member-equal e X)
-                   (set::in e X)))
-   :hints (("goal" :in-theory (enable set::subset set::head set::empty set::in
-                                      set::setp set::tail )))))
-   
- (local
-  (defthm l4
-   (implies (and (lofpp x) (lofpp y) (set::setp x) (set::setp y))
-            (equal  (acl2::subsetp-equal x y)
-                    (set::subset x y)))
-    :hints (("goal" :in-theory (enable set::subset set::head set::empty set::in set::setp
-                                       set::tail acl2::subsetp-equal acl2::member-equal)))))
-   
- (local
-  (defthm double-containment-osets
-   ;; std/osets/membership.lisp
-   (implies (and (set::setp X)
-                 (set::setp Y))
-            (equal (equal X Y)
-                   (and (set::subset X Y)
-                        (set::subset Y X))))
-   :hints (("goal" :in-theory (enable set::double-containment)))))
-
-  (local (in-theory (disable get-event get-event-time acl2::<< natp acl2::lexorder alphorder l4)))
+ (defthm step-events-contract
+   (implies (and (eventp ev)
+                 (timep tm)
+                 (memoryp mem))
+            (and (lo-tep (step-events ev tm mem))
+                 (valid-lo-tevs (step-events ev tm mem)
+                               (1+ tm)))))
+ 
+ (defthm step-memory-contract
+   (implies (and (eventp ev)
+                 (timep tm)
+                 (memoryp mem))
+            (memoryp (step-memory ev tm mem))))
 
 
-  (local
-   (defthm double-containment
-     (implies (and (lofpp x) (lofpp y) (orderedp x) (orderedp y))
-              (equal (equal x y)
-                     (and (acl2::subsetp-equal x y)
-                          (acl2::subsetp-equal y x))))
-     :hints (("goal" :do-not-induct t
-              :use ((:instance l4 (x y) (y x))
-                    (:instance l4 (x x ) (y y)))))))
+ ;; Mitesh: I probably need constraints that given mem and mem-equiv
+ ;; w.r.t set-equiv step-events and step-contract return set-equiv
+ ;; results. This might be required because Spec and the
+ ;; implementation can execute the event on a mem and mem-equiv
+ ;; (set-equiv and not equal). As a result we cannot infer that
+ ;; step-events and step-memory on both systems will return same
+ ;; result.
 
- (defthm orderedp-set-equal-is-equal
-      (implies (and (lofpp x) (lofpp y) (orderedp x) (orderedp y))
-               (equal (equal x y)
-                      (acl2::set-equiv x y)))
-      :hints (("goal" :in-theory (e/d (acl2::set-equiv) (double-containment))
-               :use ((:instance double-containment)))))
+ ;; needs a loop-stopper bad rewrite
+ (defthmd step-events-congruence
+   (implies (and (memoryp mem)
+                 (memoryp mem-equiv)
+                 (eventp ev)
+                 (timep tm)
+                 (set-equiv (double-rewrite mem) (double-rewrite mem-equiv)))
+            (set-equiv (step-events ev tm mem)
+                       (step-events ev tm mem-equiv))))
 
-(defthm ischp-set-equal-is-equal
-  (implies (and (ischp x) (ischp y))
-           (equal (equal x y)
-                  (acl2::set-equiv x y)))
-  :hints (("goal" :in-theory (e/d (ischp schp) (orderedp-set-equal-is-equal))
-           :use ((:instance orderedp-set-equal-is-equal)))))
-
-)
-
-(defthm events-at-ct-contract
-  (implies (and (schp E) (natp ct))
-           (lofpp (events-at-ct E ct)))
-  :hints (("goal" :in-theory (enable get-event get-event-time))))
-
-(defthm schp-=>lofpp
-   (implies (schp l)
-            (lofpp l))
-   :rule-classes (:rewrite  :forward-chaining))
-
-(defthm schp-=>setp
-   (implies (schp l)
-            (acl2::setp-equal l))
-   :rule-classes (:rewrite  :forward-chaining))
-
- (defthm lofpp-car-pairp
-   (implies (and (lofpp l)
-                 (consp l))
-            (and (pairp (car l))
-                 (lofpp (cdr l))))
-   :rule-classes (:rewrite  :forward-chaining))
-
- (defthm schp-car-pairp
-   (implies (and (schp l)
-                 (consp l))
-            (and (pairp (car l))
-                 (schp (cdr l))))
-   :rule-classes (:rewrite  :forward-chaining))
-
-
-(defthm set-equiv-cons
-  (implies (acl2::set-equiv E1 (cons ep E2))
-           (consp E1))
-  :hints (("goal" :use ((:instance acl2::set-equiv-implies-equal-consp-1
-                                     (x-equiv E1) (x (cons ep E2)))))))
-
-
-
-
-(defthm rmv-event-subset-eq
-  (acl2::subsetp-equal (rmv-event ev E) E))
-
-
-(encapsulate
- ()
- (local (defthm l1
-          (implies (and (not (equal x y))
-                        (member-eq y l))
-                   (member-eq y (rmv-event x l)))))
- (defthm rmv-event-preserves-subset
-   (implies (and (acl2::setp-equal E1) (acl2::setp-equal E2)
-                 (acl2::subsetp-equal (double-rewrite E1) (double-rewrite E2)))
-            (acl2::subsetp-equal (rmv-event ev E1)
-                                 (rmv-event ev E2)))
-   :hints (("goal" :in-theory (enable acl2::subsetp-equal
-                                      acl2::setp-equal rmv-event acl2::member-equal))))
+ (defthmd step-memory-congruence
+   (implies (and (memoryp mem)
+                 (memoryp mem-equiv)
+                 (eventp ev)
+                 (timep tm)
+                 (set-equiv (double-rewrite mem) (double-rewrite mem-equiv)))
+            (set-equiv (step-memory ev tm mem)
+                       (step-memory ev tm mem-equiv))))
  )
 
-(defthmd rmv-event-congruence-setequiv
-  (implies (and (acl2::setp-equal E1) (acl2::setp-equal E2)
-                (acl2::set-equiv (double-rewrite E1) (double-rewrite E2)))
-           (acl2::set-equiv (rmv-event ep E1)
-                            (rmv-event ep E2)))
-  :hints (("goal" :in-theory (enable acl2::set-equiv))))
+(create-filter*
+ (lambda (tev tm) (equal (timed-event-tm tev) tm))
+ lo-tep
+ (:fixed-vars ((timep tm))))
 
-(encapsulate
- ()
- (local 
-  (defthm l1
-    (implies (and (acl2::setp-equal E1) (acl2::setp-equal (cons ep E2))
-                  (acl2::set-equiv E1 (cons ep E2))
-                  (consp E1))
-             (acl2::set-equiv (rmv-event ep E1) E2))
-    :hints (("goal" :in-theory (enable rmv-event)
-             :use ((:instance rmv-event-congruence-setequiv
-                              (ep ep) (E1 E1) (E2 (cons ep E2))))))))
+(defunc events-at-tm-high (tevs tm)
+  "Returns the sublist of timed-events in tevs that are scheduled 
+   to execute at time = tm"
+  :input-contract (and (lo-tep tevs) (timep tm))
+  :output-contract (lo-tep (events-at-tm-high Tevs tm))
+  (filter* (lambda (tev tm) (equal (timed-event-tm tev) tm))
+           tevs tm))
 
- (defthm rmv-event-congruence-setequal-corollary
-    (implies (and (acl2::setp-equal E1) (acl2::setp-equal (cons ep E2))
-                  (acl2::set-equiv E1 (cons ep E2))
-                  (consp E1))
-             (acl2::set-equiv (rmv-event ep E1) E2))
-    :hints (("goal" :in-theory (enable rmv-event)
-             :use ((:instance rmv-event-congruence-setequiv
-                              (ep ep) (E1 E1) (E2 (cons ep E2)))))))
- )
-  
-           
-(defthm rmv-event-no-duplicate
-  (implies (no-duplicatesp-equal E)
-           (no-duplicatesp-equal (rmv-event ev E))))
+(defunc events-at-tm (tevs tm)
+  "Returns the sublist of timed-events in tevs that are scheduled 
+   to execute at time = tm"
+  :input-contract (and (lo-tep tevs) (timep tm))
+  :output-contract (lo-tep (events-at-tm Tevs tm))
+  (if (endp tevs)
+      nil
+    (if (equal (timed-event-tm (car tevs)) tm)
+        (cons (car tevs) (events-at-tm (cdr tevs) tm))
+      (events-at-tm (cdr tevs) tm))))
 
-(defthm rmv-event-setp
-  (implies (acl2::setp-equal E)
-           (acl2::setp-equal (rmv-event ev E)))
-  :hints (("goal" :in-theory (enable acl2::setp-equal))))
-            
-(defthm rmv-event-contract
-  (implies (schp E)
-           (schp (rmv-event ev E))))
+(defthmd events-at-tm-equiv
+  (implies (and (lo-tep tevs) (timep tm))
+           (equal (events-at-tm tevs tm)
+                  (events-at-tm-high tevs tm))))
 
-(in-theory (disable rmv-event-no-duplicate rmv-event-setp))
+(create-filter*
+ (lambda (e1 e2) (not (equal e1 e2)))
+ lo-tep
+ (:fixed-vars ((timed-eventp e2))))
 
-(defthmd add-event-contract-1a
-  (implies (and (pairp ev)  (no-duplicatesp-equal E))
-           (no-duplicatesp-equal (add-event ev E))))
+(defunc remove-ev-high (tevs ev)
+  "Removes all occurrences of ev in tevs"
+  :input-contract (and (lo-tep tevs) (timed-eventp ev))
+  :output-contract (lo-tep (remove-ev-high tevs ev))
+  (filter* (lambda (e1 e2) (not (equal e1 e2))) tevs ev))
 
-(defthmd add-event-contract-1b
-  (implies (and (pairp ev)  (acl2::setp-equal E))
-           (no-duplicatesp-equal (add-event ev E)))
-    :hints (("goal" :in-theory (e/d (acl2::setp-equal
-                                     add-event-contract-1a)()))))
+(defunc remove-ev (tevs ev)
+  "Removes all occurrences of ev in tevs"
+  :input-contract (and (lo-tep tevs) (timed-eventp ev))
+  :output-contract (lo-tep (remove-ev tevs ev))
+  (if (endp tevs)
+      nil
+    (if (equal (car tevs) ev)
+        (remove-ev (cdr tevs) ev)
+      (cons (car tevs) (remove-ev (cdr tevs) ev)))))
 
-(defthmd add-event-contract-1
-  (implies (and (pairp ev)  (schp E))
-           (no-duplicatesp-equal (add-event ev E)))
-  :hints (("goal" :in-theory (e/d (add-event-contract-1b)(pairp)))))
+(defthmd remove-ev-equiv
+  (implies (and (lo-tep tevs) (timed-eventp ev))
+           (equal (remove-ev tevs ev)
+                  (remove-ev-high tevs ev))))
 
-(defthm add-event-contract-2
-  (implies (and (pairp ev)  (schp E))
-           (true-listp (add-event ev E))))
+(defthm remove-ev-member-equal
+  (implies (and (timed-eventp ev)
+                (lo-tep tevs))
+           (not (member-equal ev (remove-ev tevs ev)))))
 
-(defthm add-event-contract-3
-  (implies (and (pairp ev)  (schp E))
-           (acl2::setp-equal (add-event ev E)))
-  :hints (("goal" :in-theory (e/d (acl2::setp-equal) (schp pairp))
-           :use ((:instance add-event-contract-2)
-                 (:instance add-event-contract-1))
-           :do-not-induct t)))
+(in-theory
+ (disable des-state des-statep des-state-tm
+          des-state-tevs des-state-mem))
 
+(defun-sk spec-ev-transp (w v)
+  (exists tev
+    (let ((tm (des-state-tm w))
+          (tevs (des-state-tevs w))
+          (mem (des-state-mem w)))
+      (and (timed-eventp tev)
+           (equal (timed-event-tm tev) tm)
+           (member-equal tev tevs)
+           (let* ((ev (timed-event-ev tev))
+                  (new-evs (step-events ev tm mem))
+                  (new-mem (step-memory ev tm mem))
+                  (new-tevs (remove-ev tevs tev))
+                  (new-tevs (append new-evs new-tevs)))
+             (des-state-equal v (des-state tm new-tevs new-mem))))))
+  :witness-dcls ((declare (xargs :guard (and (des-statep w) (des-statep v))
+                                 :verify-guards nil))))
 
-(defthmd add-event-contract-4
-  (implies (and (pairp ev)  (schp E))
-           (lofpp (add-event ev E)))
-  :hints (("goal" :in-theory (e/d () (pairp)))))
+(verify-guards spec-ev-transp)
 
-(defthm add-event-contract
-  (implies (and (pairp ev)  (schp E))
-           (schp (add-event ev E)))
-  :hints (("goal" :in-theory (e/d (acl2::setp-equal schp) (pairp)))))
-
-(in-theory (disable add-event-contract-1a add-event-contract-1b
-                    add-event-contract-1 add-event-contract-2
-                    add-event-contract-3 add-event-contract-4))
-                    
-
-(defthm add-events-contract
-  (implies (and (schp l)  (schp E))
-           (schp (add-events l  E)))
-  :hints (("goal" :in-theory (disable  (:rewrite acl2::default-less-than-1)
-                                       (:rewrite lofpp-car-pairp)
-                                       (:rewrite schp-=>lofpp)
-                                       (:rewrite schp-=>setp)
-                                       (:rewrite schp-car-pairp)))))
+(defunbc spec-transp (w v)
+  :input-contract (and (des-statep w) (des-statep v))
+  (let ((w-tm (des-state-tm w))
+        (w-tevs (des-state-tevs w))
+        (w-mem (des-state-mem w)))
+    (if (not (events-at-tm w-tevs w-tm))
+        (des-state-equal v (des-state (1+ w-tm) w-tevs w-mem))
+      (spec-ev-transp w v))))
 
 
+;; OptDES
 
-(defthm add-event-subset-eq
-  (acl2::subsetp-equal  E (add-event ev E)))
+(defunbc event-< (e1 e2)
+  :input-contract (and (eventp e1) (eventp e2))
+  (and (string< e1 e2) t))
 
-(defthm add-event-preserves-subset
-  (implies (and (acl2::setp-equal E1) (acl2::setp-equal E2)
-                (acl2::subsetp-equal (double-rewrite E1) (double-rewrite E2)))
-           (acl2::subsetp-equal (add-event ev E1)
-                                (add-event ev E2)))
-  :hints (("goal" :in-theory (enable acl2::subsetp-equal acl2::setp-equal add-event ))))
+(defunbc te-< (te1 te2)
+  "An ordering on event timed-events"
+  :input-contract (and (timed-eventp te1) (timed-eventp te2))
+  (let ((t1 (timed-event-tm te1))
+        (e1 (timed-event-ev te1))
+        (t2 (timed-event-tm te2))
+        (e2 (timed-event-ev te2)))
+    (or (< t1 t2)
+        (and (equal t1 t2) (event-< e1 e2)))))
 
-(defthmd add-event-congruence-setequal
-  (implies (and (acl2::setp-equal E1) (acl2::setp-equal E2)
-                (acl2::set-equiv (double-rewrite E1) (double-rewrite E2)))
-           (acl2::set-equiv (add-event ev E1)
-                            (add-event ev E2)))
-  :hints (("goal" :in-theory (enable acl2::set-equiv))))
+;; te-< is a total order
+(defthm te-<-transitive
+  (implies (and (timed-eventp te1) (timed-eventp te2) (timed-eventp p3)
+                (te-< te1 te2)
+                (te-< te2 p3))
+           (te-< te1 p3)))
 
-(in-theory (disable add-event-subset-eq add-event-preserves-subset))
+(defthm te-<-irreflexive
+  (implies  (timed-eventp p)
+            (not (te-< p p))))
 
-(encapsulate
- ()
- (local
-  (defthm l1
-    (implies (and (acl2::setp-equal E1) (acl2::setp-equal (cons x E2))
-                  (acl2::set-equiv E1 (cons x E2))
-                  (consp E1))
-             (acl2::set-equiv (add-event x E1) (cons x E2)))
-  :hints (("goal" :in-theory (enable add-event)
-           :use ((:instance add-event-congruence-setequal
-                            (ev x) (E1 E1) (E2 (cons x E2))))))))
+(defthm te-<-asymmetric
+  (implies (and (timed-eventp te1) (timed-eventp te2)
+                 (te-< te1 te2))
+            (not (te-< te2 te1))))
  
- (defthm add-event-congruence-setequal-corollary
-  (implies (and (acl2::setp-equal E1) (acl2::setp-equal (cons x E2))
-                (acl2::set-equiv E1 (cons x E2)))
-           (acl2::set-equiv (add-event x E1) (cons x E2)))
-  :hints (("goal" :in-theory (disable add-event)
-           :use ((:instance l1)
-                 (:instance set-equiv-cons)))))
- )
-
-
-(encapsulate
- ()
-
- (local (in-theory (disable schp (:rewrite add-events-contract)
-                            (:rewrite schp-=>setp)
-                            (:rewrite schp-car-pairp))))
-
- (defthm add-events-congruence-setequal
-   (implies (and (acl2::setp-equal E1) (acl2::setp-equal E2) (schp l) (schp e1) (schp e2)
-                 (acl2::set-equiv (double-rewrite E1) (double-rewrite E2)))
-            (acl2::set-equiv (add-events l E1)
-                             (add-events l E2)))
-   :hints (("subgoal *1/3''" 
-            :use ((:instance add-event-congruence-setequal
-                             (ev (car l))
-                             (E1 (add-events (cdr l) E1))
-                             (E2 (add-events (cdr l) E2)))
-                  (:instance add-events-contract (l (cdr l)) (e e1))
-                  (:instance add-events-contract (l (cdr l)) (e e2))
-                  (:instance schp-=>setp (l (add-events (cdr l) E1)))
-                  (:instance schp-=>setp (l (add-events (cdr l) E2)))))))
- )
-
-
-
-
-(defthm orderedp-member-equal
-  (implies (orderedp (cons x l))
-           (not (member-equal x l)))
-  :hints (("goal" :in-theory (e/d (member-equal) ( pairp natp) ))))
-
-(defthm orderedp-=>-no-dupl
-  (implies (orderedp l)
-           (no-duplicatesp-equal l))
-  :hints (("goal" :in-theory (e/d (acl2::setp-equal) (pairp lofpp )))))
-
-(defthm orderedp-is-true-listp
-  (implies (orderedp l) (true-listp l))
-  :rule-classes (:forward-chaining))
-
-(defthm orderedp-=>-setp
-  (implies (orderedp l)
-           (acl2::setp-equal l))
-    :hints (("goal" :in-theory (e/d (acl2::setp-equal) (orderedp)))))
-
-
-(in-theory (disable  orderedp-=>-no-dupl orderedp-is-true-listp))
-
-(defthm insert-car
-  (implies (and (pairp ep) (lofpp l)
-                (consp l)
-                (not (equal (car (insert-event ep l))
-                            (car l))))
-      (equal (car (insert-event ep l)) ep))
- :hints (("goal" :in-theory (e/d () ( pairp)))))
-  
-
-(defthm insert-event-is-lofp
-  (implies (and (pairp ep) (ischp E))
-           (lofpp (insert-event ep E)))
-  :hints (("goal" :in-theory (e/d () ( e-< pairp)))))
-
-(defthm insert-event-preserves-priority-queue
-  (implies (and (pairp ep) (ischp E))
-           (orderedp (insert-event ep E)))
-  :hints (("goal" :in-theory (e/d () ( e-< pairp)))
-          ("Subgoal *1/6.1" :in-theory (disable insert-car)
-           :use ((:instance insert-car (ep ep) (l (cdr E)))))))
-
-(defthm insert-event-is-a-setp
-  (implies (and (pairp ep) (ischp E))
-           (acl2::setp-equal (insert-event ep E)))
-  :hints (("goal" :use ((:instance insert-event-preserves-priority-queue)
-                        (:instance orderedp-=>-setp (l E)))
-           :in-theory (disable pairp ischp orderedp-=>-setp insert-event-preserves-priority-queue))))
-
-(defthm insert-event-is-ischp
-  (implies (and (pairp ep) (ischp E))
-           (ischp (insert-event ep E)))
-  :hints (("goal" :use ((:instance insert-event-preserves-priority-queue)
-                        (:instance orderedp-=>-setp (l E)))
-           :in-theory (disable pairp ischp orderedp-=>-setp insert-event-preserves-priority-queue))))
-
-(in-theory (disable insert-event-is-lofp insert-event-is-a-setp insert-car))
-
-(defthmd E-subset-eq-insert-event
-  (implies (pairp E)
-           (acl2::subsetp-equal E (insert-event ep E))))
-
-
-
-
-(defthmd insert-event-congruence-setequal
-  (implies (and (ischp E1) (ischp E2)
-                (acl2::set-equiv (double-rewrite E1) (double-rewrite E2)))
-           (equal (insert-event ev E1)
-                  (insert-event ev E2)))
-  :hints (("goal" :in-theory (disable ischp insert-event
-                                      ischp-set-equal-is-equal
-                                      acl2::set-equiv-is-an-equivalence)
-           :use ((:instance ischp-set-equal-is-equal (x E1 ) (y E2))))))
-
-
-(defthm insert-events-contract
-  (implies (and (lofpp l)
-                (ischp E))
-           (ischp (insert-events l E)))
-  :hints (("goal" :in-theory (disable ischp 
-                                      (:rewrite schp-=>setp)
-                                      (:rewrite schp-car-pairp)))))
-
-;; (defthmd insert-existing-event-nochange
-;;   (implies (and (pairp ev) (ischp E)
-;;                 (acl2::member-equal ev E))
-;;            (equal (insert-event ev E)
-;;                   E))
-;;   :hints (("goal" :in-theory (e/d (acl2::member-equal) ()))))
-
-;; (defthmd l-subset-E-insert-events-unchanged
-;;   (implies (and (lofpp l) (ischp E)
-;;                 (acl2::subsetp-equal l E))
-;;            (equal (insert-events l E)
-;;                   E))
-;;   :hints (("goal" :in-theory (e/d (acl2::subsetp-equal insert-existing-event-nochange) ()))))
-
-
-(encapsulate
- ()
-
- (local (in-theory (disable (:rewrite schp-=>setp)
-                            (:rewrite schp-car-pairp)
-                            e-< pairp)))
-
- (local (defthm insert-subset
-          (implies (and (pairp ep) (lofpp l))
-                   (subsetp-equal l (insert-event ep l)))))
-
- (local (defthm insert-event-member
-          (implies (and (pairp ep) (lofpp l))
-                   (member-equal ep (insert-event ep l)))))
- 
- (local (defthm insert-preserves-subset
-          (implies (and (pairp ep) (lofpp l1) (lofpp l2)
-                        (subsetp-equal l1 l2))
-                   (subsetp-equal (insert-event ep l1)
-                                  (insert-event ep l2)))))
-
- (local (defthmd insert-preserves-set-equiv
-          (implies (and (pairp ep) (lofpp l1) (lofpp l2)
-                        (acl2::set-equiv (double-rewrite l1) l2))
-                   (acl2::set-equiv (insert-event ep l1)
-                                    (insert-event ep l2)))
-          :hints (("goal" :in-theory (e/d (acl2::set-equiv) (pairp eventp natp))))))
-
- (local (defthm add-subset
-          (implies (and (pairp ep) (lofpp l))
-                   (subsetp-equal l (add-event ep l)))))
-
- (local (defthm add-event-member
-          (implies (and (pairp ep) (lofpp l))
-                   (member-equal ep (add-event ep l)))))
- 
- (local (defthm add-preserves-subset
-          (implies (and (pairp ep) (lofpp l1) (lofpp l2)
-                        (subsetp-equal l1 l2))
-                   (subsetp-equal (add-event ep l1)
-                                  (add-event ep l2)))))
-
- (local (defthmd add-preserves-set-equiv
-          (implies (and (pairp ep) (lofpp l1) (lofpp l2)
-                        (acl2::set-equiv (double-rewrite l1) l2))
-                   (acl2::set-equiv (add-event ep l1)
-                                    (add-event ep l2)))
-          :hints (("goal" :in-theory (e/d (acl2::set-equiv) (pairp eventp natp))))))
-
- (local (defthm add-event-cons 
-          (subsetp-equal (add-event ep l)
-                         (cons ep l))))
-
- (local (defthm insert-event-cons 
-          (subsetp-equal (insert-event ep l)
-                         (cons ep l))))
-
-
- (in-theory (disable ACL2::DEFAULT-LESS-THAN-1 
-                     ACL2::DEFAULT-LESS-THAN-2))
- 
-
- (local (defthmd insert-event-subset-add-event
-          (implies (and (schp s)
-                        (pairp ep))
-                   (subsetp-equal (insert-event ep s)
-                                  (add-event ep s)))
-          :hints (("goal" :in-theory (e/d (subsetp-equal)
-                                          ((:rewrite schp-=>setp)
-                                           (:rewrite schp-car-pairp))
-                                          (pairp eventp natp))))))
-
- (local (defthm l1
-          (subsetp-equal (add-event e1 l)
-                         (cons e1 (cons e2 l)))))
- 
- (local (defthmd add-event-subset-insert-event
-          (implies (and (schp s)
-                        (pairp ep))
-                   (subsetp-equal (add-event ep s)
-                                  (insert-event ep s)))
-          :hints (("goal" :in-theory (e/d ()
-                                          (pairp eventp natp))
-                   :induct (add-event ep s)))))
-
- (local (defthmd add-event-seteq-insert-event-1
-          (implies (and (schp s)
-                        (pairp ep))
-                   (acl2::set-equiv (add-event ep s)
-                                    (insert-event ep s)))
-          :hints (("goal" :in-theory (e/d (acl2::set-equiv) (pairp schp))
-                   :use ((:instance add-event-subset-insert-event)
-                         (:instance insert-event-subset-add-event))))))
-
- (local (defthmd add-event-seteq-insert-event
-          (implies (and (schp s)
-                        (ischp i)
-                        (acl2::set-equiv (double-rewrite i) (double-rewrite s))
-                        (pairp ep))
-                   (acl2::set-equiv (add-event ep s)
-                                    (insert-event ep i)))
-          :hints (("goal" :in-theory (e/d () (pairp ischp schp insert-event-congruence-setequal))
-                   :use ((:instance add-event-seteq-insert-event-1)
-                         (:instance insert-preserves-set-equiv (l1 s) (l2 i)))
-                   :do-not-induct t))))
-
- (local (in-theory (disable insert-event-congruence-setequal add-events-congruence-setequal)))
-
- 
- (defthmd add-events-seteq-insert-events
-   (implies (and (schp s)
-                 (ischp i)
-                 (acl2::set-equiv (double-rewrite i) (double-rewrite s))
-                 (schp l))
-            (acl2::set-equiv (insert-events l i)
-                             (add-events l s)))
-   :hints (("goal" :in-theory (e/d ()
-                                   (schp ischp pairp eventp
-                                         natp add-event insert-event
-                                         ))
-            :induct (insert-events l i))
-           ("Subgoal *1/2.1" :in-theory (disable schp ischp  pairp)
-            :use ((:instance add-event-seteq-insert-event
-                             (ep (car l)) (s (add-events (cdr l) s))
-                             (i (insert-events (cdr l) i)))
-                  (:instance add-events-contract (l (cdr l)) (E S))))))
- )
- 
-
-
-(skip-proofs
- (defthm igood-statep-inductive
-   (implies (igood-statep s)
-            (igood-statep (impl-step s)))))
-
-
-(defthm valid-timestamps-cons
-  (implies (and (> t1 t2)  
-                (valid-timestamps E t2 f))
-           (valid-timestamps (cons (cons t1 ev) E) t2 f))
-  :hints (("goal" :induct (valid-timestamps E ct f)
-           :in-theory (enable get-event-time))))
-
-(defthm valid-timestamps-events-at-ct
-  (implies (and (> t1 t2)
-                (valid-timestamps E t1 f))
-           (not (events-at-ct E t2))))
-
-(defthm events-at-ct-cons-1
-  (implies (and (not (equal t2 t1))
-                (not (events-at-ct E t1)))
-           (not (events-at-ct (cons (cons t2 ev) E) t1)))
-    :hints (("goal" :in-theory (enable get-event-time))))
-
-
-(defthm events-at-ct-cons
-  (implies (and (> t2 t1)
-                (valid-timestamps E t2 f))
-           (not (events-at-ct (cons (cons t2 ev) E) t1)))
-  :hints (("goal" :in-theory (e/d () (valid-timestamps-events-at-ct
-                                      events-at-ct-cons-1))
-           :use ((:instance  valid-timestamps-events-at-ct)
-                 (:instance events-at-ct-cons-1)))))
-
-
-;; Begin proof for B constraints.
-
-
-(in-theory (enable get-event-time))
-
-(defthm events-at-ct-top-of-queue-1
-  (implies (and (orderedp E)
-                (events-at-ct E ct)
-                (valid-timestamps E ct nil))
-           (equal (get-event-time (car E)) ct))
-  :hints (("goal" :in-theory (enable e-<)
-           :induct (and (orderedp E) (events-at-ct E ct)))))
-
-(defthm events-at-ct-top-of-queue
-  (implies (and (ischp E)
-                (events-at-ct E ct)
-                (valid-timestamps E ct nil))
-           (equal (get-event-time (car E)) ct))
-  :hints (("goal" :in-theory (e/d (ischp) (get-event-time)))))
-
-(defthm no-events-at-ct-top-of-queue-1
-  (implies (and (orderedp E)
-                (lofpp E)
-                (consp E)
-                (natp ct)
-                (not (events-at-ct E ct))
-                (valid-timestamps E ct nil))
-           (> (get-event-time (car E)) ct))
-  :hints (("goal" :in-theory (enable get-event-time e-<)
-           :induct (and (orderedp E) (events-at-ct E ct))))
-  :rule-classes (:rewrite :linear))
-
-(defthm no-events-at-ct-top-of-queue
-  (implies (and (ischp E)
-                (consp E)
-                (natp ct)
-                (not (events-at-ct E ct))
-                (valid-timestamps E ct nil))
-           (> (get-event-time (car E)) ct))
-  :hints (("goal" :in-theory (e/d (ischp) (get-event-time))))
-  :rule-classes (:rewrite :linear))
-
-(defthm events-at-ct-memberp-E
-  (implies (and (ischp E)
-                (events-at-ct E ct)
-                (valid-timestamps E ct nil))
-           (acl2::member-equal  (car E) (events-at-ct E ct)))
-  :hints (("goal" :in-theory (e/d (acl2::memberp-equal)
-                                  (events-at-ct-top-of-queue ischp
-                                   natp valid-timestamps get-event
-                                   get-event-time))
-           :use ((:instance events-at-ct-top-of-queue))
-           :do-not-induct t)))
-            
-(defthm events-at-ct-memberp-E-1
-  (implies (and (acl2::member-equal ep (events-at-ct E ct))
-                (valid-timestamps E ct nil))
-           (events-at-ct E ct))
-  :hints (("goal" :in-theory (enable acl2::memberp-equal))))
-
-(in-theory (disable get-event get-event-time istate istate-ct istate-e
-                    istate-st rmv-event sstate sstate-ct sstate-e
-                    sstate-st natp))
-
-
-(defun B-witness-v-event-at-ct (ev w)
-  (declare (xargs :guard (and (eventp ev) (sstatep w))
-                  :verify-guards nil))
- " ev is an event that is choosen in w to be executed at the current
-   time"
-  (b* (((mv new-evs up-st) (execute-event ev (sstate-ct w) (sstate-st w)))
-       (up-E (rmv-event (cons (sstate-ct w) ev) (sstate-E w)))
-       (up-E (add-events new-evs up-E))
-       (v (sstate (sstate-ct w) up-E up-st)))
-    v))
-
-(defun B-witness-v-noevent-at-ct (w)
-  (declare (xargs :guard (sstatep w)))
-  (sstate (1+ (sstate-ct w)) (sstate-E w) (sstate-st w)))
-
-(defthmd B-witness-v-event-at-ct-related-to-w
-  (implies (and (sstatep w)
-                (events-at-ct (sstate-E w) (sstate-ct w))
-                (acl2::member-equal (pick-event-pq E) (events-at-ct (sstate-E w) (sstate-ct w))))
-           (spec-relation w (B-witness-v-event-at-ct (get-event (pick-event-pq E)) w)))
-  :hints (("goal" :in-theory (disable exists-ev-at-ct-suff)
-           :use ((:instance exists-ev-at-ct-suff (ep (pick-event-pq E)) (w w)
-                            (v (B-witness-v-event-at-ct (get-event (pick-event-pq E)) w)))))))
-
-(defthmd B-witness-v-event-at-ct-related-to-w-1
-  (let* ((ev (get-event (pick-event-pq (istate-E s))))
-         (v (B-witness-v-event-at-ct ev (ref-map s))))
-    (implies (and (istatep s)
-                  (valid-timestamps (sstate-E (ref-map s)) (sstate-ct (ref-map s)) nil)
-                  (events-at-ct (sstate-E (ref-map s)) (sstate-ct (ref-map s))))
-             (spec-relation (ref-map s) v)))
-  :hints (("goal" :use ((:instance events-at-ct-memberp-E (E (sstate-E (ref-map s)))
-                                   (ct (sstate-ct (ref-map s))) )
-                        (:instance B-witness-v-event-at-ct-related-to-w
-                                   (w (ref-map s)) (E (sstate-E (ref-map s)))))
-           :in-theory (disable exists-ev-at-ct-suff
-                               b-witness-v-event-at-ct-related-to-w
-                               spec-relation
-                               B-witness-v-event-at-ct
-                               events-at-ct-memberp-E
-                               events-at-ct-memberp-E-1))))
-
-(defthm igood-statep-=>=valid-timestamps
-  (implies (igood-statep s)
-           (valid-timestamps (istate-E s) (istate-ct s) nil)))
-
-
-(defthm ischp-=>-schp
-  (implies (ischp x)
-           (schp x))
-  :rule-classes (:rewrite))
-
-(defthm cdr-car-schp
- (implies (and (schp x)
-               (consp x))
-          (eventp (get-event (car x))))
- :hints (("goal" :in-theory (enable get-event ))))
-
-(defthm car-car-schp
- (implies (and (schp x)
-               (consp x))
-          (natp (get-event-time (car x))))
- :hints (("goal" :in-theory (enable get-event-time ))))
-
-      
-(defthm rmv-event-pq-contract
-  (implies (ischp e)
-           (ischp (rmv-event-pq e)))
-  :hints (("goal" :cases ((consp e))
-           :in-theory (enable rmv-event-pq ischp))))
-
-;; B-constraint in case  (events-at-ct (istate-E s) (istate-ct s))
-(encapsulate
- ()
- (in-theory (enable add-events-contract))
- 
- (defthmd B-constraints-1a
-   (let* ((ev (get-event (pick-event-pq (istate-E s))))
-          (w (ref-map s))
-          (v (B-witness-v-event-at-ct ev w)))
-     (implies (and (istatep s)
-                   (igood-statep s)
-                   (events-at-ct (istate-E s) (istate-ct s)))
-              (spec-relation w v)))
-   :hints (("goal" :use ((:instance B-witness-v-event-at-ct-related-to-w-1))
-            :in-theory (e/d() (B-witness-v-event-at-ct
-                               igood-statep
-                               events-at-ct spec-relation
-                               events-at-ct-memberp-E-1
-                               get-event)))))
-
- (local (in-theory (disable events-at-ct storep eventp istate-eth igood-statep
-                            istate-eh valid-timestamps RMV-EVENT-PQ SCHP ISCHP
-                            events-at-ct-top-of-queue)))
- 
- (local
-  (defthmd B-constraints-1b-1
-    (let* ((u (impl-step s))
-           (ev (get-event (pick-event-pq (istate-E s))))
-           (w (ref-map s))
-           (v (B-witness-v-event-at-ct ev w)))
-      (implies (and (istatep s)
-                    (istatep u)
-                    (igood-statep s)
-                    (events-at-ct (istate-E s) (istate-ct s)))
-               (equal (sstate-ct (ref-map u)) (sstate-ct v))))
-    :hints (("goal" :in-theory (e/d () (get-event istate-evh
-                                                  istate-sth
-                                                  events-at-ct-top-of-queue))
-             :use ((:instance events-at-ct-top-of-queue
-                              (E (istate-E s)) (ct (istate-ct s))))))))
-
- (local
-  (defthmd B-constraints-1b-2
-    (let* ((u (impl-step s))
-           (ev (get-event (pick-event-pq (istate-E s))))
-           (w (ref-map s))
-           (v (B-witness-v-event-at-ct ev w)))
-      (implies (and (istatep s)
-                    (istatep u)
-                    (igood-statep s)
-                    (CONSP (ISTATE-E s))
-                    (events-at-ct (istate-E s) (istate-ct s)))
-               (equal (sstate-st (ref-map u)) (sstate-st v))))
-    :hints (("goal" :use ((:instance events-at-ct-top-of-queue
-                                     (E (istate-E s)) (ct (istate-ct s))))))))
-
- (local
-  (defthm l1
-    (implies (and (istatep s)
-                  (events-at-ct (istate-e s) (istate-ct s))
-                  (valid-timestamps (istate-e s) (istate-ct s) nil))
-             (equal (RMV-EVENT (CONS (ISTATE-CT S)
-                                     (GET-EVENT (CAR (ISTATE-E S))))
-                               (ISTATE-E S))
-                    (RMV-EVENT-PQ (ISTATE-E S))))
-    :hints (("goal" :in-theory (enable get-event rmv-event rmv-event-pq igood-statep get-event-time)
-             :use ((:instance events-at-ct-top-of-queue
-                              (E (istate-E s)) (ct (istate-ct s))))))))
-
- (local
-  (defthmd B-constraints-1b-3
-    (let* ((u (impl-step s))
-           (ev (get-event (pick-event-pq (istate-E s))))
-           (w (ref-map s))
-           (v (B-witness-v-event-at-ct ev w)))
-      (implies (and (istatep s)
-                    (istatep u)
-                    (igood-statep s)
-                    (events-at-ct (istate-E s) (istate-ct s)))
-               (acl2::set-equiv (sstate-E (ref-map u)) (sstate-E v))))
-    :hints (("goal" :use ((:instance events-at-ct-top-of-queue
-                                     (E (istate-E s)) (ct (istate-ct s)))
-                          (:instance add-events-seteq-insert-events
-                                     (l (MV-NTH 0
-                                                (EXECUTE-EVENT (GET-EVENT (CAR (ISTATE-E S)))
-                                                               (ISTATE-CT S)
-                                                               (ISTATE-ST S))))
-                                     (i (RMV-EVENT-PQ (ISTATE-E S)))
-                                     (s (RMV-EVENT (CONS (ISTATE-CT S)
-                                                         (GET-EVENT (CAR (ISTATE-E S))))
-                                                   (ISTATE-E S)))))))))
-
- (local
-  (defthmd B-constraints-1b
-   (let* ((u (impl-step s))
-          (ev (get-event (pick-event-pq (istate-E s))))
-          (w (ref-map s))
-          (v (B-witness-v-event-at-ct ev w)))
-     (implies (and (istatep s)
-                   (istatep u)
-                   (igood-statep s)
-                   (events-at-ct (istate-E s) (istate-ct s)))
-              (B u v)))
-   :hints (("goal" :in-theory (enable B)
-            :use ((:instance B-constraints-1b-1)
-                  (:instance B-constraints-1b-2)
-                  (:instance B-constraints-1b-3))))))
-
- 
-
- (defthmd B-constraints-events-at-ct
-   (let* ((u (impl-step s))
-          (ev (get-event (pick-event-pq (istate-E s))))
-          (w (ref-map s))
-          (v (B-witness-v-event-at-ct ev w)))
-     (implies (and (istatep s)
-                   (istatep u)
-                   (igood-statep s)
-                   (events-at-ct (istate-E s) (istate-ct s)))
-              (and (spec-relation w v)
-                   (B u v))))
-   :hints (("goal" :in-theory (disable spec-relation B igood-statep
-                                       B-witness-v-event-at-ct
-                                       pick-event-pq impl-step)
-            :use ((:instance B-constraints-1a)
-                  (:instance B-constraints-1b)))))
-
- )
-
-
-;; B-constraint in case  (not (events-at-ct (istate-E s) (istate-ct s)))
-
-(defthmd B-witness-v-noevent-at-ct-related-to-w
-  (implies (and (sstatep (ref-map s))
-                (not (events-at-ct (sstate-E (ref-map s)) (sstate-ct (ref-map s)))))
-           (spec-relation (ref-map s) (B-witness-v-noevent-at-ct  (ref-map s)))))
-
-
-(defthm get-event-time-contract
-  (implies (pairp ep)
-           (natp (get-event-time ep)))
-  :hints (("goal" :in-theory (enable get-event-time)))
+(defthm te-<-trichotomy
+  (implies (and (timed-eventp te1)
+                (timed-eventp te2)
+                (not (te-< te1 te2)))
+           (equal (te-< te2 te1)
+                  (not (equal te1 te2)))))
+
+(in-theory (disable te-< te-<-definition-rule))
+
+(defunbc ordered-lo-tep (l)
+  "Check if a list of event-timed-events, l, is ordered"
+  :input-contract (lo-tep l)
+  (cond ((endp l) t)
+        ((endp (cdr l)) t)
+        (t (and (te-< (car l) (second l))
+                (ordered-lo-tep (cdr l))))))
+
+(defunbc o-lo-tep (l)
+  "An OptDES schedule recognizer"
+  :input-contract t
+  (and (lo-tep l)
+       (ordered-lo-tep l)))
+
+(register-type o-lo-te :predicate o-lo-tep :enumerator nth-lo-te)
+
+(defunc insert-tev (tev otevs)
+  "Insert timed-event tev into otevs"
+  :input-contract (and (timed-eventp tev) (o-lo-tep otevs))
+  :output-contract (o-lo-tep (insert-tev tev otevs))
+  (if (endp otevs)
+      (list tev)
+    (cond ((equal tev (car otevs))
+           otevs)
+          ((te-< tev (car otevs))
+           (cons tev otevs))
+          (t (cons (car otevs) (insert-tev tev (cdr otevs)))))))
+
+(defunc insert-otevs (l otevs)
+  "Insert timed-events in l in otevs"
+  :input-contract (and (lo-tep l) (o-lo-tep otevs))
+  :output-contract (o-lo-tep (insert-otevs l otevs))
+  (if (endp l)
+      otevs
+    (insert-tev (car l) (insert-otevs (cdr l) otevs))))
+
+;; The following two theorem are proved by tau but if not provided as
+;; rewrite rules some other theorems fail. ???
+
+(defthm o-lo-tep-cdr
+  (implies (and (o-lo-tep l) (consp l))
+           (o-lo-tep (cdr l)))
+  :hints (("goal" :in-theory (enable o-lo-tep))))
+
+(defthm o-lo-tep-car
+  (implies (and (o-lo-tep l) (consp l))
+           (timed-eventp (car l))))
+
+(defthm o-lo-tep=>lo-tep
+   (implies (o-lo-tep l)
+            (lo-tep l))
+   :rule-classes (:rewrite :forward-chaining))
+
+;; State of OptDES
+(defdata odes-state
+  (record (tm . time)
+          (otevs . o-lo-te)
+          (mem . memory)))
+
+(defunbc odes-state-equal (s w)
+  :input-contract t
+  (or (equal s w)
+      (and (odes-statep s)
+           (odes-statep w)
+           (equal (odes-state-tm s)
+                  (odes-state-tm w))
+           (equal (odes-state-otevs s)
+                  (odes-state-otevs w))
+           (set-equiv (odes-state-mem s)
+                            (odes-state-mem w)))))
+
+(defequiv odes-state-equal)
+
+(in-theory (disable timep o-lo-tep-definition-rule odes-state
+                    odes-state-otevs odes-state-tm odes-state-mem
+                    timed-event-ev timed-event-tm))
+
+(defunc odes-transf (s)
+  "transition function for the implementation"
+  :input-contract (odes-statep s)
+  :output-contract (odes-statep (odes-transf s))
+  (let ((tm (odes-state-tm s))
+        (otevs (odes-state-otevs s))
+        (mem (odes-state-mem s)))
+    (if (endp otevs)
+        (odes-state (1+ tm) otevs mem)
+      (b* ((tev (car otevs))
+           (ev (timed-event-ev tev))
+           (et (timed-event-tm tev))
+           (new-tevs (step-events ev et mem))
+           (new-mem (step-memory ev et mem))
+           (new-otevs (cdr otevs))
+           (new-otevs (insert-otevs new-tevs new-otevs))
+           (new-tm (timed-event-tm tev)))
+        (odes-state new-tm new-otevs new-mem)))))
+
+;; We next describe an HoptDES machine obtained by augumenting a state
+;; of OptDES machine with a history component. The transition function
+;; of HoptDES is defined by modifying the transition function of
+;; OptDES such that the history variable records the past information.
+
+(defdata history
+  (record (valid . boolean)
+          (tm . time)
+          (otevs . o-lo-te)
+          (mem . memory)))
+
+(defdata hstate
+  (record (tm . time)
+          (otevs . o-lo-te)
+          (mem . memory)
+          (h . history)))
+
+(defunbc hstate-equal (s w)
+  :input-contract t
+  (or (equal s w)
+      (and (hstatep s)
+           (hstatep w)
+           (equal (hstate-tm s)
+                  (hstate-tm w))
+           (equal (hstate-otevs s)
+                  (hstate-otevs w))
+           (set-equiv (hstate-mem s)
+                      (hstate-mem w))
+           (if (history-valid (hstate-h s))
+               (and (history-valid (hstate-h w))
+                    (equal (history-tm (hstate-h s))
+                           (history-tm (hstate-h w)))
+                    (equal (history-otevs (hstate-h s))
+                           (history-otevs (hstate-h w)))
+                    (set-equiv (history-mem (hstate-h s))
+                                     (history-mem (hstate-h w))))
+             (not (history-valid (hstate-h w)))))))
+                
+(defequiv hstate-equal)
+(defcong hstate-equal equal (hstate-tm x) 1)
+(defcong hstate-equal equal (hstate-otevs x) 1)
+(defcong hstate-equal set-equiv (hstate-mem x) 1)
+
+(in-theory (disable hstate hstate-otevs hstate-tm hstate-mem hstate-h
+                   history history-valid history-otevs history-mem
+                   history-tm des-state))
+
+(defunc hodes-transf (s)
+  "transition function for HoptDES"
+  :input-contract (hstatep s)
+  :output-contract (hstatep (hodes-transf s))
+  (let* ((tm (hstate-tm s))
+         (otevs (hstate-otevs s))
+         (mem (hstate-mem s))
+         (hist (history t tm otevs mem)))
+    (if (endp otevs)
+        (hstate (1+ tm) otevs mem hist)
+      (let* ((tev (car otevs))
+             (ev (timed-event-ev tev))
+             (et (timed-event-tm tev))
+             (new-tevs (step-events ev et mem))
+             (new-mem (step-memory ev et mem))
+             (new-otevs (cdr otevs))
+             (new-otevs (insert-otevs new-tevs new-otevs))
+             (new-tm (timed-event-tm tev)))
+        (hstate new-tm new-otevs new-mem hist)))))
+
+
+;; OptDES refines HoptDES under a refinement map P
+(defunc P (s)
+  :input-contract (odes-statep s)
+  :output-contract (hstatep (P s))
+  (let ((tm (odes-state-tm s))
+        (otevs (odes-state-otevs s))
+        (mem (odes-state-mem s)))
+    (hstate tm otevs mem (history nil 0 nil nil))))
+
+(defunbc good-odes-statep (s)
+  "good odes state recognizer"
+  :input-contract t
+  (and (odes-statep s)
+       (valid-lo-tevs (odes-state-otevs s) (odes-state-tm s))))
+
+(defunbc good-histp (s)
+  "Checks if the history component of an Hstate is good"
+  :input-contract (hstatep s)
+  (let* ((hist (hstate-h s))
+         (h-tm (history-tm hist))
+         (h-valid (history-valid hist))
+         (h-otevs (history-otevs hist))
+         (h-mem (history-mem hist))
+         (hst (hstate h-tm h-otevs h-mem
+                      (history nil 0 nil nil)))
+         (sh (hodes-transf hst)))
+    (implies h-valid
+             (and (hstate-equal sh s)
+                  (valid-lo-tevs h-otevs (hstate-tm s))))))
+
+(defunbc good-hstatep (s)
+  :input-contract t
+  (and (hstatep s)
+       (valid-lo-tevs (hstate-otevs s) (hstate-tm s))
+       (good-histp s)))
+
+(defthm good-hstate-is-hstate-fw
+  (implies (good-hstatep x)
+           (hstatep x))
   :rule-classes (:rewrite :forward-chaining))
 
+(defunbc A (s w)
+  "SKS/STS relation between OptDES and HoptDES"
+  :input-contract t
+  (and (good-odes-statep s)
+       (good-hstatep w)
+       (let* ((ps (P s))
+              (ps-tm (hstate-tm ps))
+              (ps-otevs (hstate-otevs ps))
+              (ps-mem (hstate-mem ps))
+              (w-tm (hstate-tm w))
+              (w-otevs (hstate-otevs w))
+              (w-mem (hstate-mem w)))
+         (and (equal ps-tm w-tm)
+              (equal ps-otevs w-otevs)
+              (set-equiv ps-mem w-mem)))))
+
+(defthm P-good
+  (implies (good-odes-statep s)
+           (A s (P s))))
+
+(defthm no-events-at-tm-top-of-queue-1
+  (implies (and (o-lo-tep E) (timep tm)
+                (valid-lo-tevs E tm)
+                (not (equal (timed-event-tm (car E)) tm)))
+           (not (events-at-tm E tm)))
+  :hints (("goal" :in-theory (e/d (te-<-definition-rule
+                                   ordered-lo-tep timep
+                                   o-lo-tep) (timed-event))
+           :induct (ordered-lo-tep E))))
+
+(defthm no-events-at-tm-top-of-queue-2
+  (implies (and (o-lo-tep E)
+                (consp E)
+                (timep tm)
+                (not (events-at-tm E tm))
+                (valid-lo-tevs E tm))
+           (> (timed-event-tm (car E)) tm))
+  :hints (("goal" :in-theory (e/d (ordered-lo-tep) (timed-event-tm))))
+  :rule-classes (:rewrite :linear))
+
+(defthm valid-lo-tevs->=-tm
+  (implies (and (lo-tep E) (timep t1) (timep t2)
+                (>= t1 t2)
+                (valid-lo-tevs E t1))
+           (valid-lo-tevs E t2)))
+
+(defthm valid-lo-tevs-o-lo-tep
+  (implies (and (o-lo-tep E)
+                (consp E))
+           (valid-lo-tevs E (timed-event-tm (car E))))
+  :hints (("goal" :in-theory (e/d (te-<-definition-rule
+                                   ordered-lo-tep timep
+                                   o-lo-tep) (timed-event))
+           :induct (ordered-lo-tep E))))
 
 (encapsulate
- ()
+ nil
+
+ (local (defthm valid-lo-tevs-member
+          (implies (and (lo-tep l)  (timep tm)
+                        (timed-eventp tev)
+                        (member-equal tev l)
+                        (valid-lo-tevs l tm))
+                   (>= (timed-event-tm tev) tm))
+          :hints (("goal" :in-theory (e/d (acl2::member-equal))))))
+
+ (local (defthm valid-lo-tevs-subsetp
+          (implies (and (lo-tep l1) (lo-tep l2) (timep tm)
+                        (acl2::subsetp-equal l1 l2)
+                        (valid-lo-tevs l2 tm))
+                   (valid-lo-tevs l1 tm))
+          :hints (("goal" :in-theory (enable acl2::subsetp-equal)))))
  
- (local (in-theory (disable events-at-ct storep eventp istate-eth
-                            igood-statep istate-eh valid-timestamps
-                            RMV-EVENT-PQ SCHP ISCHP
-                            events-at-ct-top-of-queue-1
-                            events-at-ct-top-of-queue
-                            no-events-at-ct-top-of-queue-1
-                            no-events-at-ct-top-of-queue)))
+ (defthm valid-lo-tevs-setequiv
+   (implies (and (lo-tep l1) (lo-tep l2) (timep tm)
+                 (set-equiv l1 l2)
+                 (valid-lo-tevs l2 tm))
+            (valid-lo-tevs l1 tm))
+   :hints (("goal" :in-theory (enable set-equiv))))
+ )
 
- (local
-  (defthm bla-1
-    (implies (and (natp t1) (natp t2) (< t1 t2))
-             (<= (1+ t1) t2))))
+(encapsulate
+ nil
+ (local (defthm cons-setequiv-insert
+          (implies (and (o-lo-tep l) (timed-eventp tev))
+                   (set-equiv (insert-tev tev l)
+                              (cons tev l)))
+          :hints (("goal" :in-theory (enable set-equiv)))))
 
+ (defthm append-setequiv-insert-tevs
+   (implies (and (o-lo-tep l) (lo-tep x))
+            (set-equiv (insert-otevs x l)
+                       (append x l)))
+   :hints (("goal" :in-theory (enable set-equiv))))
  
-
- (local (in-theory (disable (:rewrite acl2::default-less-than-1)
-                            (:rewrite acl2::default-less-than-2))))
+ (local (defthm valid-lo-tevs-append
+          (implies (and (lo-tep l1) (lo-tep l2)
+                        (timep tm1) (timep tm2)
+                        (>= tm2 tm1)
+                        (valid-lo-tevs l1 tm1)
+                        (valid-lo-tevs l2 tm2))
+                   (valid-lo-tevs (append l1 l2) tm1))))
+ 
+ (defthm valid-lo-tevs-insert-otevs
+          (implies (and (o-lo-tep l1) (lo-tep l2)
+                        (timep tm1) (timep tm2)
+                        (>= tm2 tm1)
+                        (valid-lo-tevs l1 tm1)
+                        (valid-lo-tevs l2 tm2))
+                   (valid-lo-tevs (insert-otevs l2 l1) tm1))
+          :hints (("goal" :use ((:instance valid-lo-tevs-append)
+                                (:instance append-setequiv-insert-tevs
+                                           (x l2) (l l1))
+                                (:instance valid-lo-tevs-setequiv
+                                           (l2 (append l1 l2))
+                                           (l1 (insert-otevs l2 l1))
+                                           (tm tm1)))
+                   :in-theory (disable valid-lo-tevs-append
+                                       valid-lo-tevs-setequiv
+                                       append-setequiv-insert-tevs)
+                   :do-not-induct t)))
+ 
+ (local (defthmd fw1
+          (implies (and (o-lo-tep l) (consp l))
+                   (o-lo-tep (cdr l)))))
 
  (local (defthm l1
-          (let* ((u (impl-step s)))
-            (implies (and (istatep s)
-                          (igood-statep s)
-                          (not (events-at-ct (istate-E s) (istate-ct s))))
-                     (<= (1+ (istate-ct s)) (istate-ct u))))
-          :hints (("goal" :cases ((consp (istate-E s)))
-                   :in-theory (e/d () (igood-statep))
-                   :use ((:instance no-events-at-ct-top-of-queue
-                                    (E (istate-E s)) (ct (istate-ct s))))))))
- (local
-  (defthmd B-constraints-1b-1
-    (let* ((u (impl-step s))
-           (w (ref-map s))
-           (v (B-witness-v-noevent-at-ct w)))
-      (implies (and (istatep s)
-                    (igood-statep s)
-                    (not (events-at-ct (istate-E s) (istate-ct s))))
-               (<= (sstate-ct v) (istate-ct u))))
-    :hints (("goal" :cases ((consp (istate-E s)))
-             :in-theory (e/d () (igood-statep impl-step)))
-            ("subgoal 1.2.2" :use ((:instance l1))))))
+          (implies (and (lo-tep x) (timed-eventp tev)
+                        (o-lo-tep (cons tev l))
+                        (timep tm) 
+                        (valid-lo-tevs l (timed-event-tm tev))               
+                        (valid-lo-tevs x tm)
+                        (> tm (timed-event-tm tev)))
+                   (valid-lo-tevs (insert-otevs x l)
+                                  (timed-event-tm tev)))
+          :hints (("goal" :in-theory (disable valid-lo-tevs-insert-otevs
+                                              insert-otevs-definition-rule
+                                              valid-lo-tevs-o-lo-tep timed-event
+                                              VALID-LO-TEVS->=-TM fw1)
+                   :use ((:instance fw1 (l (cons tev l)))
+                         (:instance valid-lo-tevs-insert-otevs
+                                    (l1 l) (l2 x)
+                                    (tm1 (timed-event-tm tev))
+                                    (tm2 tm)))
+                   :do-not-induct t))))
 
- 
- (local 
-  (defthmd B-constraints-1b-2
-    (let* ((u (impl-step s))
-           (w (ref-map s))
-           (v (B-witness-v-noevent-at-ct w)))
-      (implies (and (istatep s)
-                    (igood-statep s)
-                    (not (events-at-ct (istate-E s) (istate-ct s))))
-               (equal (sstate-st v) (istate-sth u))))
-    :hints (("goal" :use ((:instance no-events-at-ct-top-of-queue
-                                     (E (istate-E s)) (ct (istate-ct s))))
-             :in-theory (disable sstate-st istate-sth no-events-at-ct-top-of-queue)))))
-
-
- (local
-  (defthmd B-constraints-1b-3
-    (let* ((u (impl-step s))
-           (w (ref-map s))
-           (v (B-witness-v-noevent-at-ct w)))
-      (implies (and (istatep s)
-                    (igood-statep s)
-                    (not (events-at-ct (istate-E s) (istate-ct s))))
-               (and (acl2::set-equiv (sstate-E v) (istate-Eh u)))))
-    :hints (("goal" :use ((:instance no-events-at-ct-top-of-queue
-                                     (E (istate-E s)) (ct (istate-ct s))))
-             :in-theory (disable sstate-E  no-events-at-ct-top-of-queue)))))
-
-  (local (defthmd l2
-          (implies (and (orderedp E) (lofpp E)
-                        (consp E)
-                        (>= (get-event-time (car E)) ct))
-                   (valid-timestamps E ct nil))
-            :hints (("goal" :in-theory (enable e-< valid-timestamps)
-           :induct (and (orderedp E) (valid-timestamps E ct nil))))))
-
- (local
-  (defthm B-constraints-1b-4
-    (let* ((u (impl-step s))
-           (w (ref-map s))
-           (v (B-witness-v-noevent-at-ct w)))
-      (implies (and (istatep s)
-                    (igood-statep s)
-                    (not (events-at-ct (istate-E s) (istate-ct s))))
-               (valid-timestamps (sstate-E v) (istate-ct u) nil)))
-    :hints (("goal" :in-theory (enable valid-timestamps igood-statep)
-             :use ((:instance l2 (E (istate-E s)) (ct (GET-EVENT-TIME (CAR (ISTATE-E S))))))))))
-
-
-(local
-  (defthmd B-constraints-1b-5
-   (let* ((w (ref-map s))
-          (v (B-witness-v-noevent-at-ct w)))
-     (implies (and (istatep s)
-                   (igood-statep s)
-                   (not (events-at-ct (istate-E s) (istate-ct s))))
-              (spec-relation w v)))))
-
-
-
- (defthmd B-constraints-noevents-at-ct
-   (let* ((u (impl-step s))
-          (w (ref-map s))
-          (v (B-witness-v-noevent-at-ct w)))
-     (implies (and (istatep s)
-                   (igood-statep s)
-                   (not (events-at-ct (istate-E s) (istate-ct s))))
-              (and (spec-relation w v)
-                   (C u v))))
-   :hints (("goal" :in-theory (disable spec-relation B igood-statep
-                                       B-witness-v-noevent-at-ct
-                                       pick-event-pq impl-step)
-            :use ((:instance B-constraints-1b-1)
-                  (:instance B-constraints-1b-2)
-                  (:instance B-constraints-1b-3)
-                  (:instance B-constraints-1b-4)
-                  (:instance B-constraints-1b-5)))))
- )
-
-
-;; B-constraints end
-
-;;; begin proof for C constrains
-   
-
-(defthm
-  member-equal-set-equiv
-  (implies (acl2::set-equiv acl2::a acl2::b)
-           (iff (member-equal acl2::x acl2::a)
-                (member-equal acl2::x acl2::b)))
-  :rule-classes nil
-  :hints
-  (("goal" :do-not-induct t
-    :in-theory (enable acl2::set-equiv acl2::memberp-equal)
-    ;;TODO possibly the hints belowcan be removed
-    :use ((:instance acl2::memberp-equal-subsetp-equal ;; 
-                     (acl2::x acl2::x)
-                     (acl2::a acl2::a)
-                     (acl2::b acl2::b))
-          (:instance acl2::memberp-equal-subsetp-equal
-                     (acl2::x acl2::x)
-                     (acl2::a acl2::b)
-                     (acl2::b acl2::a))))))
-
-(encapsulate
- ()
-
-  (local 
-   (defthm ep-in-events-at-ct
-    (acl2::member-equal (cons ct ev)
-                         (events-at-ct (cons (cons ct ev) E) ct))
-    :hints (("goal" :in-theory (enable  events-at-ct get-event get-event-time)
-             :induct (events-at-ct E ct)))))
-
- (defthm ep-in-events-at-ct-1
-   (implies (acl2::member-equal (cons ct ev) E)
-            (acl2::member-equal (cons ct ev) (events-at-ct E ct)))
-   :hints (("goal" :in-theory (enable  events-at-ct get-event get-event-time)
-            :induct (events-at-ct E ct))))
-
- (local (defthm memberp-=>-not-nil
-          (implies (acl2::member-equal x l)
-                   l)
-          ;; :hints (("goal" :in-theory (enable acl2::memberp-equal)))
-  :rule-classes ()))
-
- (local (in-theory (disable get-event get-event-time istate istate-ct
-                            istate-e istate-st rmv-event sstate
-                            sstate-ct sstate-e sstate-st natp istate
-                            istate-ct istate-E istate-Eh istate-eth
-                            istate-evh istate-st e-<-transitivity
-                            e-<-not-reflexive e-<-asymmetric
-                            e-<-trichotomy
-                            no-events-at-ct-top-of-queue
-                            insert-event-congruence-setequal )))
-
-
-
- (local
-  (defthm event-at-ct-in-y-lemma
-    (let ((eph (cons ct (istate-evh x))))
-      (implies (and (istatep x)
-                    (acl2::member-equal eph (istate-Eh x)) ;; from igood-statep
-                    (sstatep y)
-                    (acl2::set-equiv (sstate-E y) (istate-Eh x))) ;; from C
-               (events-at-ct (sstate-E y) ct)))
-    :hints (("goal" :in-theory (disable  ep-in-events-at-ct-1 istate-Eh)
-             :use ((:instance member-equal-set-equiv
-                              (a (sstate-E y)) (b (istate-Eh x))
-                              (x (cons ct (istate-evh x))))
-                   (:instance ep-in-events-at-ct-1
-                              (E (sstate-E y))
-                              (ev (istate-evh x))
-                              (ct ct))
-                   (:instance memberp-=>-not-nil
-                              (x (istate-evh x))
-                              (l (events-at-ct (sstate-E y) ct)))))))
-  )
-
- 
-
- (local (defthm igood-statep=>memberp
-          (implies (igood-statep x)
-                   (acl2::member-equal (cons (istate-eth x) (istate-evh x)) (istate-Eh x)))))
-
- (local (defthm igood-statep=>eth=ct
-          (implies (igood-statep x)
-                   (equal (istate-eth x) (istate-ct x)))))
- 
- (local (defthm c-E-setequal
-          (implies (and (C x y) (not (B x y)))
-                   (acl2::set-equiv (sstate-E y) (istate-Eh x)))))
-
- (defthm event-at-ct-in-y
-   (implies (and (istatep x)
-                 (igood-statep x)
-                 (sstatep y)
-                 (C x y)
-                 (not (B x y))
-                 (equal (istate-ct x) (sstate-ct y))) 
-            (events-at-ct (sstate-E y) (sstate-ct y)))
-   :hints (("goal" :in-theory (disable B C 
-                                       c-E-setequal igood-statep
-                                       igood-statep=>eth=ct
-                                       igood-statep=>memberp
-                                       ACL2::SET-EQUAL-REFLEXIVE)
-            :use ((:instance event-at-ct-in-y-lemma (ct (istate-eth x)))
-                  (:instance c-E-setequal)
-                  (:instance igood-statep=>eth=ct)
-                  (:instance igood-statep=>memberp)))))
- )
-
-
-(defun witness-x-ct=y-ct (x y)
-;   (declare (xargs :guard (and (istatep x) (sstatep y))))
-  (b* ((ct (sstate-ct y))
-       (E (sstate-E y))
-       (st (sstate-st y))
-       (eth (istate-eth x))
-       (evh (istate-evh x))
-       (eph (cons eth evh))
-       ((mv new-evs up-st) (execute-event evh ct st))
-       (up-E (rmv-event eph E))
-       (up-E (add-events new-evs up-E))
-       (z (sstate ct up-E up-st)))
-    z))
-
-
-(encapsulate
- ()
-  (local (in-theory (disable get-event get-event-time istate istate-ct
-                            istate-e istate-st rmv-event sstate ischp
-                            schp sstate-ct sstate-e sstate-st natp
-                            istate istate-ct istate-E istate-Eh
-                            istate-eth istate-evh istate-st
-                            e-<-transitivity e-<-not-reflexive
-                            e-<-asymmetric e-<-trichotomy
-                            no-events-at-ct-top-of-queue
-                            insert-event-congruence-setequal)))
-
- (local
-  (defthmd c-spec-relation-2b-1-lemma
-    (implies (and (istatep x)
-                  (igood-statep x)
-                  (sstatep y)
-                  (acl2::set-equiv (sstate-E y) (istate-Eh x))
-                  (equal (istate-ct x) (sstate-ct y)))
-             (acl2::member-equal (cons (istate-eth x) (istate-evh x)) (events-at-ct (sstate-E y) (sstate-ct y))))
-    :hints (("goal" :in-theory (e/d () (B events-at-ct exists-ev-at-ct
-                                          istate-Eh istate-Evh istate-sth
-                                          rmv-event))
-             :use ((:instance member-equal-set-equiv
-                              (a (sstate-E y)) (b (istate-Eh x))
-                              (x (cons (sstate-ct y) (istate-evh x))))
-                   (:instance ep-in-events-at-ct-1
-                              (E (sstate-E y))
-                              (ev (istate-evh x))
-                              (ct (sstate-ct y)))))))
-  )
-
-
- (local (defthm igood-statep=>eth=ct
-          (implies (igood-statep x)
-                   (equal (istate-eth x) (istate-ct x)))))
-
- (local (defthm igood-statep=>memberp
-          (implies (igood-statep x)
-                   (member-equal (cons (istate-eth x) (istate-evh x)) (istate-Eh x)))))
- 
- (local (defthm c-E-setequal
-          (implies (and (C x y) (not (B x y)))
-                   (acl2::set-equiv (sstate-E y) (istate-Eh x)))))
-
- (local
-  (defthm c-spec-relation-2b-1
-    (implies (and (istatep x)
-                  (igood-statep x)
-                  (sstatep y)
-                  (C x y)
-                  (not (B x y))
-                  (equal (istate-ct x) (sstate-ct y)))
-             (member-equal (cons (sstate-ct y) (istate-evh x)) (events-at-ct (sstate-E y) (sstate-ct y))))
-    :hints (("goal" :in-theory (disable B C 
-                                       c-E-setequal igood-statep
-                                       igood-statep=>memberp
-                                       c-spec-relation-2b-1-lemma
-                                       ACL2::SET-EQUAL-REFLEXIVE)
-            :use ((:instance c-spec-relation-2b-1-lemma)
-                  (:instance c-E-setequal)
-                  (:instance igood-statep=>memberp))))))
-
- (local (defthm bla
-          (equal (get-event (cons ct ev))
-                 ev)
-          :hints (("goal" :in-theory (enable get-event)))))
- 
- (local
-  (defthmd c-spec-relation-2b-2
-    (implies (and (istatep x)
-                  (igood-statep x)
-                  (sstatep y)
-                  (equal (istate-ct x) (sstate-ct y)))
-             (mv-let (new-evs up-st)
-                     (execute-event (get-event (cons (sstate-ct y) (istate-evh x)))
-                                               (sstate-ct y) (sstate-st y))
-                     (let* ((up-e (rmv-event (cons (sstate-ct y) (istate-evh x)) (sstate-E y)))
-                            (up-e (add-events new-evs up-e)))
-                       (equal (witness-x-ct=y-ct x y)
-                              (sstate (sstate-ct y) up-e up-st)))))))
-
- 
- (local
-  (defthmd c-spec-relation-2b-3
-    (implies (and (istatep x)
-                  (igood-statep x)
-                  (sstatep y)
-                  (C x y)
-                  (not (B x y))
-                  (equal (istate-ct x) (sstate-ct y)))
-             (exists-ev-at-ct y (witness-x-ct=y-ct x y)))
-    :hints (("goal" :in-theory (disable exists-ev-at-ct-suff exists-ev-at-ct
-                                        witness-x-ct=y-ct
-                                        ACL2::SUBSETP-EQUAL-REFLEXIVE
-                                        ACL2::SUBSETP-MEMBER
-                                        c-spec-relation-2b-1 igood-statep sstatep istatep
-                                        c-spec-relation-2b-2 B sstate-ct istate-ct
-                                        istate-Eh C)
-             :use ((:instance c-spec-relation-2b-2)
-                   (:instance c-spec-relation-2b-1)
-                   (:instance exists-ev-at-ct-suff
-                              (ep (cons (sstate-ct y) (istate-evh x)))
-                              (w y) (v (witness-x-ct=y-ct x y))))))))
-
-
- (defthmd c-spec-relation-2b
-   (implies (and (istatep x)
-                 (igood-statep x)
-                 (sstatep y)
-                 (C x y)
-                 (not (B x y))                
-                 (equal (istate-ct x) (sstate-ct y)))
-            (spec-relation y (witness-x-ct=y-ct x y)))
-   :hints (("goal" :in-theory (disable exists-ev-at-ct-suff exists-ev-at-ct
-                                       igood-statep sstatep istatep
-                                       B sstate-ct istate-ct
-                                       istate-Eh C)
-            :use ((:instance c-spec-relation-2b-3)
-                  (:instance event-at-ct-in-y)))))
-
-
- )
-
-;; Case y.ct < x.ct
-
-(defun witness-y-ct<-x-ct (y)
-    (declare (xargs :guard (sstatep y)))
-    (let* ((z-ct (sstate-ct y))
-           (z-E (sstate-E y))
-           (z-st (sstate-st y))
-           (z (sstate (1+ z-ct) z-E z-st)))
-      z))
-
-
-;; TODO: takes lot of time  53+ seconds
-(defthmd spec-relation-no-event-at-ct
-  (implies (and (istatep x)
-                (igood-statep x)
-                (sstatep y)
-                (sgood-statep y)
-                (not (events-at-ct (sstate-E y) (sstate-ct y)))
-                (C x y))
-            (spec-relation y (witness-y-ct<-x-ct y))))
- 
-;; xCz holds
-(defthmd c-witness-x-ct<-y-ct
-  (implies (and (istatep x)
-                (igood-statep x)
-                (sstatep y)
-                (C x y)
-                (not (B x y))                
-                (< (sstate-ct y) (istate-ct x)))
-           (C x (witness-y-ct<-x-ct  y)))
-  :hints (("goal" :in-theory (disable igood-statep sstatep istatep B ref-map istate-Eh))))
-
-
-(encapsulate
- ()
-
- (local (defthmd l1
-          (implies (and (acl2::setp-equal l) (acl2::setp-equal l-equiv)
-                        (acl2::set-equiv l l-equiv))
-                   (acl2::set-equiv (rmv-event (car l) l-equiv)
-                                    (rmv-event (car l) l)))
-          :hints (("goal" :use ((:instance rmv-event-congruence-setequiv
-                                           (ep (car l)) (E1 l) (E2 l-equiv)))))))
-
- (local (defthmd l2
-          (implies (and (acl2::setp-equal l) (acl2::setp-equal l-equiv)
-                        (acl2::set-equiv l l-equiv))
-                   (acl2::set-equiv (rmv-event (car l) l-equiv)
-                                    (cdr l)))
-          :hints (("goal" :in-theory (enable rmv-event)
-                   :use ((:instance l1))))))
-          
- (defthmd xlemma-6
-   (implies (and (istatep x) (sstatep y) (schp l)
-                 (acl2::set-equiv (sstate-E y) (istate-eh x)))
-            (acl2::set-equiv (add-events l (rmv-event (car (istate-eh x)) (sstate-E y)))
-                             (insert-events l (cdr (istate-eh x)))))
-   :hints (("goal" :use
-            ((:instance l2 (l (istate-eh x)) (l-equiv (sstate-E y)))
-             (:instance add-events-seteq-insert-events
-                        (i (cdr (istate-eh x)))
-                        (s (rmv-event (car (istate-eh x)) (sstate-E y))) (l l))
-             (:instance schp-car-pairp (l (istate-eh x))))
-            :in-theory (e/d (add-events-contract insert-events-contract )
-                            (add-events-congruence-setequal
-                             add-events insert-events istate-eh  schp-car-pairp)))))
- )
-    
-
-(encapsulate
- ()
-(in-theory (disable get-event get-event-time istate istate-ct istate-e
-                            istate-st rmv-event sstate sstate-ct
-                            sstate-e sstate-st natp istate istate-ct
-                            istate-E istate-Eh istate-eth istate-evh
-                            istate-st istate-sth e-<-transitivity
-                            e-<-not-reflexive e-<-asymmetric
-                            e-<-trichotomy
-                            no-events-at-ct-top-of-queue
-                            insert-event-congruence-setequal e-<
-                            eventp ischp storep insert-events-contract
-                            ischp-=>-schp schp))
-
-;; very fragile 
-(local (defthmd c-witness-x-ct-=-y-ct
-  (implies (and (istatep x)
-                (igood-statep x)
-                (sstatep y)
-                (C x y)
-                (not (B x y))                
-                (equal (sstate-ct y) (istate-ct x)))
-           (B x (witness-x-ct=y-ct x y)))
-  :hints (("goal" :in-theory (disable sstatep istatep ref-map ischp
-                                       istate-Eh schp
-                                       execute-event-contract))
-          ("subgoal 6" :in-theory (disable add-events-contract)
-           :use ((:instance add-events-contract
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x))))
-                            (E (rmv-event (car (istate-eh x)) (sstate-e y))))
-                 (:instance execute-event-contract (ev (istate-evh x)) (ct (istate-ct x))
-                            (st (istate-sth x)))))
-          ("subgoal 5" :in-theory (disable add-events-contract)
-           :use ((:instance add-events-contract
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x))))
-                            (E (rmv-event (car (istate-eh x)) (sstate-e y))))
-                 (:instance execute-event-contract (ev (istate-evh x)) (ct (istate-ct x))
-                            (st (istate-sth x)))
-                 (:instance xlemma-6
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x)))))))
-          ("subgoal 4":in-theory (disable add-events-contract execute-event-contract)
-           :use ((:instance add-events-contract
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x))))
-                            (E (rmv-event (car (istate-eh x)) (sstate-e y))))
-                 (:instance execute-event-contract (ev (istate-evh x)) (ct (istate-ct x))
-                            (st (istate-sth x)))))
-          ("subgoal 3":in-theory (disable add-events-contract execute-event-contract)
-           :use ((:instance add-events-contract
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x))))
-                            (E (rmv-event (car (istate-eh x)) (sstate-e y))))
-                 (:instance execute-event-contract (ev (istate-evh x)) (ct (istate-ct x))
-                            (st (istate-sth x)))))
-          ("subgoal 2" :in-theory (disable add-events-contract)
-           :use ((:instance add-events-contract
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x))))
-                            (E (rmv-event (car (istate-eh x)) (sstate-e y))))
-                 (:instance execute-event-contract (ev (istate-evh x)) (ct (istate-ct x))
-                            (st (istate-sth x)))
-                 (:instance xlemma-6
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x)))))))
-          ("subgoal 1":in-theory (disable add-events-contract execute-event-contract)
-           :use ((:instance add-events-contract
-                            (l (mv-nth 0 (execute-event (istate-evh x)
-                                                        (istate-ct x) (istate-sth x))))
-                            (E (rmv-event (car (istate-eh x)) (sstate-e y))))
-                 (:instance execute-event-contract (ev (istate-evh x)) (ct (istate-ct x))
-                            (st (istate-sth x))))))))
-
-
-;; (encapsulate
-;;  ()
-;;  (local (in-theory (enable valid-timestamps)))
-
- (local
-  (defthm valid-timestamps-cons2 
-    (implies (valid-timestamps (cons ep E) ct f)
-             (and (valid-timestamps E ct f)
-                  (>= (get-event-time ep) ct)))))
-
- (local (defthmd valid-timestamps-add-event-1
-          (implies (and (schp E) (booleanp f)
-                        (valid-timestamps E t2 nil)
-                        (>= t1 t2))
-                   (valid-timestamps (add-event (cons t1 ev) E) t2 nil))
-          :hints (("goal" :in-theory (enable get-event-time get-event)))))
-
- (local (in-theory (disable schp)))
- 
- (local (defthmd induction-hyps-lemma-1
-          (implies (and (schp E)
-                        (schp x) 
-                        (booleanp f) (natp t1) (natp t2) (pairp ep)
-                        (valid-timestamps (add-events x E) t2 f)
-                        (> (get-event-time ep) t2))
-                   (valid-timestamps (add-event ep (add-events x E)) t2 f))
-          :hints (("goal" :use ((:instance valid-timestamps-add-event-1 (E (add-events x E))))
-                   :in-theory (enable get-event-time)))))
-
- (local (defthmd valid-timestamps-add-events
-          (implies (and (booleanp f) (schp l) (schp E)
-                        (valid-timestamps l t1 f)
-                        (valid-timestamps E t2 f)
-                        (natp t1) (natp t2)
-                        (> t1 t2))
-                   (valid-timestamps (add-events l E) t2 f))
-          :hints (("goal" :induct (add-events l E))
-                  ("Subgoal *1/2.1.1" :use ((:instance induction-hyps-lemma-1
-                                                       (x l2) (E E) (ep l1) (t2 t2) (f f))
-                                            (:instance valid-timestamps-cons2
-                                                       (ep l1) (E l2) (ct t1))
-                                            (:instance schp-car-pairp (l (cons l1 l2))))
-                   :in-theory (disable pairp induction-hyps-lemma-1 valid-timestamps-cons2)))))
-
-
-  (local (defthmd valid-timestamps-subsetp
-           (implies (and (acl2::subsetp-equal vq uq)
-                         (valid-timestamps uq ct f))
-                    (valid-timestamps vq ct f))
-           :hints (("goal" :in-theory (enable acl2::subsetp-equal)))))
-
-
- (local (defthmd l1
-          (implies (and (sstatep y)
-                        (valid-timestamps (sstate-E y) (sstate-ct y) f))
-                   (valid-timestamps (rmv-event ev (sstate-E y)) (sstate-ct y) f))
-          :hints (("goal" :use ((:instance rmv-event-subset-eq)
-                                (:instance valid-timestamps-subsetp
-                                           (vq (rmv-event ev (sstate-E y)))
-                                           (uq (sstate-E y))
-                                           (ct (sstate-ct y))))))))
-           
- (local (defthmd l2
-          (implies (and (natp ct) (schp E))
-                   (equal (valid-timestamps E ct t)
-                          (valid-timestamps E (1+ ct) nil)))
-          :hints (("goal" :induct (lofpp E)
-                   :in-theory (enable e-< valid-timestamps get-event-time)))))
-
- (local (defthmd valid-timestamps-add-events-1
-          (let ((l (mv-nth 0 (execute-event (istate-evh x)
-                                            (sstate-ct y) (sstate-st y))))
-                (E (rmv-event (car (istate-eh x)) (sstate-E y)))
-                (t2 (sstate-ct y)))
-            (implies (and (istatep x)
-                          (sstatep y)
-                          (valid-timestamps l (1+ (sstate-ct y)) nil )
-                          (valid-timestamps E t2 nil))
-                     (valid-timestamps (add-events l E) t2 nil)))
-          :hints (("goal" :use ((:instance valid-timestamps-add-events
-                                           (l (mv-nth 0 (execute-event (istate-evh x)
-                                                                       (sstate-ct y) (sstate-st y))))
-                                           (E (rmv-event (car (istate-eh x)) (sstate-E y)))
-                                           (t2 (sstate-ct y))
-                                           (t1 (1+ (sstate-ct y)))
-                                           (f nil)))
-                   :in-theory (disable eventp ischp
-                                       valid-timestamps-add-events storep
-                                       acl2::default-plus-2)))))
-
- (local (defthm igood-statep-car-Eh
-          (implies (igood-statep s)
-           (equal (car (istate-eh s))
-                  (cons (istate-eth s) (istate-evh s))))
-          :hints (("goal" :in-theory (enable igood-statep)))))
-
- ;; C-witness valid-timestamps condition
-
- (local (in-theory (enable l1)))
- (local (defthmd c-witness-x-ct-=-y-ct-valid-timestamp
-   (implies (and (istatep x)
-                 (igood-statep x)
-                 (sstatep y)
-                 (sgood-statep y)
-                 (C x y)
-                 (not (B x y))                
-                 (equal (sstate-ct y) (istate-ct x)))
-            (valid-timestamps (sstate-E (witness-x-ct=y-ct x y)) (istate-ct x) nil))
-   :hints (("goal" :in-theory (e/d (sgood-statep witness-x-ct=y-ct)
-                                   (istate-ct igood-statep C B
-                                              ISTATEP-IMPLIES-CONSP
-                                              SSTATEP-IMPLIES-CONSP
-                                              sstate-ct istate-ct
-                                              sstate-E sstate-st eventp
-                                              ischp storep istate-eth
-                                              istate-evh
-                                              execute-event-contract
-                                              igood-statep-car-Eh
-                                              )))
-           ("goal''"
-            :use ((:instance valid-timestamps-add-events-1)
-                  (:instance execute-event-contract
-                             (ev (istate-evh x)) (ct (sstate-ct y)) (st (sstate-st y)))
-                  (:instance l2
-                             (E (mv-nth 0 (execute-event (istate-evh x)
-                                                         (sstate-ct y) (sstate-st y))))
-                             (ct (sstate-ct y)))))
-           ("subgoal 2"
-            :use ((:instance igood-statep-car-Eh (s x)))))))
-
-
-(local (defthmd c-witness-x-ct-=-y-ct-final
-   (implies (and (istatep x)
-                 (igood-statep x)
-                 (sstatep y)
-                 (sgood-statep y)
-                 (C x y)
-                 (not (B x y))                
-                 (equal (sstate-ct y) (istate-ct x)))
-            (C x (witness-x-ct=y-ct x y)))
-   :hints (("goal" :use ((:instance c-witness-x-ct-=-y-ct-valid-timestamp)
-                         (:instance c-witness-x-ct-=-y-ct))
-            :in-theory (disable istatep igood-statep sstatep sgood-statep B sstate-ct istate-ct)))))
-             
-
-(local (defthm case-exhaustive
-  (implies (and (istate-ct x) (sstate-ct y)
-                (C x y)
-                (not (B x y)))
-           (<= (sstate-ct y) (istate-ct x)))
-  :hints (("goal" :in-theory (disable B)))))
-
-(defthmd c-constraints-1
-  (let ((z (if (< (sstate-ct y) (istate-ct x))
-               (witness-y-ct<-x-ct  y)
-             (witness-x-ct=y-ct x y))))
-    (implies (and (istatep x)
-                  (igood-statep x)
-                  (sstatep y)
-                  (sgood-statep y)
-                  (C x y)
-                  (not (B x y)))
-             (C x z)))
-  :hints (("goal" :cases ((< (sstate-ct y) (istate-ct x)) (= (sstate-ct y) (istate-ct x)))
-           :use ((:instance case-exhaustive)
-                 (:instance c-witness-x-ct-=-y-ct-final)
-                 (:instance c-witness-x-ct<-y-ct))
-           :in-theory (disable sgood-statep igood-statep sstatep
-                               istatep B ref-map istate-Eh istate-sth
-                               witness-x-ct=y-ct
-                               witness-y-ct<-x-ct))))
-)
-
-;; begin rankls
-
-;; ;; next we show that rankls decreases.  Note that we only need to show
-;; ;; this incase of xBy does not hold.
-
-(encapsulate
- ()
- (local (in-theory (enable get-event-time rmv-event valid-timestamps)))
-
- (local (in-theory (enable (:rewrite acl2::default-less-than-1)
-                           (:rewrite acl2::default-less-than-2))))
-
- (local (defthm  l1
-   (<= (len (events-at-ct (rmv-event (cons ct ev) E) ct))
-       (len (events-at-ct E ct)))))
-
- 
  (local (defthm l2
-   (implies (> t1 t2)
-            (= (len (events-at-ct (add-event (cons t1 ev) E) t2))
-               (len (events-at-ct E t2))))))
-
- 
- (local (defthm rmv-event-len-decrease
-          (<= (len (rmv-event ev E))
-              (len E))
-          :rule-classes :linear))
-
- (local (defthm l3a
-   (implies (member-equal ep l)
-            (< (len (rmv-event ep l))
-               (len l)))))
-
- (local (defthm l3b
-   (equal (events-at-ct (rmv-event ep E) ct)
-          (rmv-event ep (events-at-ct E ct)))
-   :hints (("goal" :do-not '(generalize)))))
+          (implies (and (lo-tep x) (timed-eventp tev)
+                        (o-lo-tep (cons tev l))
+                        (timep tm) 
+                        (valid-lo-tevs l (timed-event-tm tev))               
+                        (valid-lo-tevs x (1+ (timed-event-tm tev))))
+                   (valid-lo-tevs (insert-otevs x l)
+                                  (timed-event-tm tev)))
+          :hints (("goal" :in-theory (disable valid-lo-tevs-insert-otevs
+                                              insert-otevs-definition-rule
+                                              valid-lo-tevs-o-lo-tep timed-event
+                                              VALID-LO-TEVS->=-TM fw1 l1)
+                   :use ((:instance l1 (tm (1+ (timed-event-tm tev)))))))))
 
  (local (defthm l3
-   (implies (member-equal ep (events-at-ct E ct))
-            (< (len (events-at-ct (rmv-event ep E) ct))
-               (len (events-at-ct E ct))))
-   :hints (("goal" :in-theory (disable member-equal l3a l3b
-                                       acl2::subsetp-equal-reflexive
-                                       (:rewrite acl2::subsetp-member . 1)
-                                       (:rewrite acl2::subsetp-refl)
-                                       (:type-prescription member-equal))
-            :use ((:instance l3b)
-                  (:instance l3a (l  (events-at-ct E ct)) (ep ep)))))))
- 
+          (implies (and (o-lo-tep (cons tev l))
+                        (timed-eventp tev) (timep tm)
+                        (valid-lo-tevs (cons tev l) tm))
+                   (valid-lo-tevs l tm))))
+
  (local (defthm l4
-   (implies (and (natp t1) (natp t2)
-                 (valid-timestamps l t1 nil)
-                 (> t1 t2))
-            (= (len (events-at-ct (add-events l E) t2))
-               (len (events-at-ct E t2))))))
-                 
+          (implies (and (o-lo-tep (cons tev l)) (timep tm)
+                        (timed-eventp tev))
+                   (valid-lo-tevs (cons tev l) (timed-event-tm tev)))
+          :hints (("Goal" :in-theory (disable valid-lo-tevs-o-lo-tep
+                                              valid-lo-tevs-definition-rule)
+                   :use ((:instance valid-lo-tevs-o-lo-tep
+                                    (E (cons tev l))))))))
+
  (local (defthm l5
-   (implies (and (natp t1) (natp t2)
-                 (valid-timestamps l t1 nil)
-                 (> t1 t2))
-            (<= (len (events-at-ct (add-events l (rmv-event (cons t2 ev) E)) t2))
-                (len (events-at-ct E t2))))))
+          (implies (and (o-lo-tep (cons tev l)) (timep tm)
+                        (timed-eventp tev))
+                   (valid-lo-tevs l (timed-event-tm tev)))))
 
- (local (defthm l6
-   (implies (and (natp t1) (natp t2)
-                 (valid-timestamps l t1 nil)
-                 (member-equal ep (events-at-ct E t2))
-                 (> t1 t2))
-            (< (len (events-at-ct (add-events l (rmv-event ep E)) t2))
-               (len (events-at-ct E t2))))))
-
- ;; BOZO: fix the definition of execute-event to use (1+ ct) and
- ;; remove the flag in valid-timestamps then I can get rid of this lemma
-  (local (defthmd l7
-                 (implies (and (natp ct) (schp E))
-                   (equal (valid-timestamps E ct t)
-                          (valid-timestamps E (1+ ct) nil)))
-          :hints (("goal" :induct (lofpp E)
-                   :in-theory (enable e-< valid-timestamps get-event-time)))))
-
-  (local (defthm l8
-   (implies (and (natp t2)
-                 (schp l)
-                 (valid-timestamps l t2 t)
-                 (member-equal ep (events-at-ct E t2)))
-            (< (len (events-at-ct (add-events l (rmv-event ep E)) t2))
-               (len (events-at-ct E t2))))
-   :hints (("goal" :in-theory (disable schp natp)
-            :use ((:instance l7 (E l)
-                             (ct t2))
-                  (:instance l6 (t1 (1+ t2))))
-            :do-not-induct t))))
-
- (local (defthm igood-statep-car-Eh
-          (implies (igood-statep s)
-           (equal (car (istate-eh s))
-                  (cons (istate-eth s) (istate-evh s))))
-          :hints (("goal" :in-theory (enable igood-statep)))))
-
- (local (defthm igood-statep-member
-          (implies (igood-statep x)
-                   (member-equal (cons (istate-eth x) (istate-evh x)) (istate-Eh x)))))
+  (local (defthm lemma
+           (implies (and (lo-tep x)
+                         (timed-eventp tev)
+                         (o-lo-tep (cons tev l))
+                         (timep tm)
+                         (>= (timed-event-tm tev) tm)
+                         (valid-lo-tevs l tm)
+                         (valid-lo-tevs x (1+ (timed-event-tm tev))))
+                    (valid-lo-tevs (insert-otevs x l)
+                                   (timed-event-tm tev)))))
  
- (local (defthm igood-statep-eth
-          (implies (igood-statep x)
-                   (equal (istate-eth x) (istate-ct x)))))
+ (local (defthm lemma-1
+          (implies (and (odes-statep s)
+                        (valid-lo-tevs (odes-state-otevs s)
+                                       (odes-state-tm s))
+                        (consp (odes-state-otevs s)))
+                   (valid-lo-tevs
+                    (insert-otevs (step-events
+                                   (timed-event-ev (car (odes-state-otevs s)))
+                                   (timed-event-tm (car (odes-state-otevs s)))
+                                   (odes-state-mem s))
+                                  (cdr (odes-state-otevs s)))
+                    (timed-event-tm (car (odes-state-otevs s)))))
+        :hints (("Goal" :in-theory (disable valid-lo-tevs->=-tm
+                                            no-events-at-tm-top-of-queue-1
+                                            no-events-at-tm-top-of-queue-2)))))
  
- (local (defthm l9
-          (implies (member-equal (cons ct ev) E)
-            (member-equal (cons ct ev) (events-at-ct E ct)))))
+ (defthm good-odes-inductive
+   (implies (good-odes-statep s)
+            (good-odes-statep (odes-transf s)))
+   :rule-classes (:forward-chaining :rewrite))
 
- ;; In this case the number of events scheduled to execute at ct
-;; decreases
-(local (defthmd rankls-witness-x-ct=-y-ct
-  (implies (and (istatep x)
-                (igood-statep x)
-                (sstatep y)
-                (C x y)
-                (not (B x y))
-                (= (sstate-ct y) (istate-ct x)))
-           (< (rankls (witness-x-ct=y-ct x y) x)
-              (rankls y x)))
-  :hints (("goal" :use ((:instance l8
-                                   (l (mv-nth 0 (execute-event (istate-evh x) (sstate-ct y) (sstate-st y))))
-                                    (t2 (istate-ct x))
-                                   (ep (cons (istate-eth x) (istate-evh x)))
-                                   (E (sstate-E y)))
-                        (:instance l9
-                                   (ct (istate-eth x)) (ev (istate-evh x)) (E (istate-E y)))
-                        (:instance igood-statep-member))
-           :in-theory (disable igood-statep istatep
-                               igood-statep-member l1 l2 l3 l4 l5 l6
-                               l7 l8 l9 sstatep B sstate-ct istate-ct)))))
+ (local (defthm lemma-2
+          (implies (and (hstatep s)
+                        (valid-lo-tevs (hstate-otevs s)
+                                       (hstate-tm s))
+                        (consp (hstate-otevs s)))
+                   (valid-lo-tevs
+                    (insert-otevs (step-events
+                                   (timed-event-ev (car (hstate-otevs s)))
+                                   (timed-event-tm (car (hstate-otevs s)))
+                                   (hstate-mem s))
+                                  (cdr (hstate-otevs s)))
+                    (timed-event-tm (car (hstate-otevs s)))))
+          :hints (("Goal" :in-theory (disable valid-lo-tevs->=-tm
+                                              no-events-at-tm-top-of-queue-1
+                                              no-events-at-tm-top-of-queue-2)))))
+ 
+ (defthm good-hstate-inductive
+   (implies (good-hstatep s)
+            (good-hstatep (hodes-transf s)))
+   :hints (("Goal" :in-theory (disable
+                               no-events-at-tm-top-of-queue-1
+                               no-events-at-tm-top-of-queue-2)))
+   :rule-classes (:forward-chaining :rewrite))
+
+ )
 
 
-(local (defthmd rankls-witness-y-ct<-x-ct
-  (implies (and (istatep x)
-                (igood-statep x)
-                (sstatep y)
-                (C x y)
-                (not (B x y))
-                (< (sstate-ct y) (istate-ct x)))
-           (< (rankls (witness-y-ct<-x-ct y) x)
-              (rankls y x)))
-  :hints (("goal" :in-theory (disable istatep igood-statep sstatep  B sstate-ct istate-ct)))))
 
-             
+(encapsulate
+ nil
 
-(local (defthm case-exhaustive
-  (implies (and (istate-ct x) (sstate-ct y)
-                (C x y)
-                (not (B x y)))
-           (<= (sstate-ct y) (istate-ct x)))
-  :hints (("goal" :in-theory (disable B)))))
+ ;; need this lemma since we insist that generated events are just a
+ ;; set and inserting them results in "equal" otevs
+ (skip-proofs
+  (local (defthm insert-otevs-l-equiv-is-equal
+           (implies (and (o-lo-tep otevs)
+                         (lo-tep l)
+                         (lo-tep l-equiv)
+                         (set-equiv l l-equiv))
+                    (equal (insert-otevs l otevs)
+                           (insert-otevs l-equiv otevs))))))
 
-(defthmd c-constraints-2
-  (let ((z (if (< (sstate-ct y) (istate-ct x))
-               (witness-y-ct<-x-ct  y)
-             (witness-x-ct=y-ct x y))))
-    (implies (and (istatep x)
-                  (igood-statep x)
-                  (sstatep y)
-                  (sgood-statep y) 
-                  (C x y)
-                  (not (B x y)))
-             (< (rankls z x) (rankls y x))))
-  :hints (("goal" :cases ((< (sstate-ct y) (istate-ct x)) (= (sstate-ct y) (istate-ct x)))
-           :use ((:instance case-exhaustive)
-                 (:instance rankls-witness-y-ct<-x-ct)
-                 (:instance rankls-witness-x-ct=-y-ct))
-           :in-theory (disable sgood-statep igood-statep sstatep
-                               istatep B ref-map istate-Eh istate-sth
-                               witness-x-ct=y-ct
-                               witness-y-ct<-x-ct rankls))))
+ ;; Not sure if it is useful here and/or there might be a better place for
+ ;; this congruence relation
+ ;; (defthm hodes-transf-congruence
+ ;;   (implies (hstate-equal s w)
+ ;;            (hstate-equal (hodes-transf s)
+ ;;                          (hodes-transf w)))
+ ;;   :hints (("goal" :in-theory (disable insert-otevs-l-equiv-is-equal)
+ ;;            :use ((:instance step-events-congruence
+ ;;                             (ev (timed-event-ev (car (hstate-otevs s))))
+ ;;                             (tm (timed-event-tm (car (hstate-otevs s))))
+ ;;                             (mem (hstate-mem s))
+ ;;                             (mem-equiv (hstate-mem w)))
+ ;;                  (:instance step-memory-congruence
+ ;;                             (ev (timed-event-ev (car (hstate-otevs s))))
+ ;;                             (tm (timed-event-tm (car (hstate-otevs s))))
+ ;;                             (mem (hstate-mem s))
+ ;;                             (mem-equiv (hstate-mem w)))
+ ;;                  (:instance insert-otevs-l-equiv-is-equal
+ ;;                             (otevs (cdr (hstate-otevs s)))
+ ;;                             (l (step-events (timed-event-ev (car (hstate-otevs s)))
+ ;;                                             (timed-event-tm (car (hstate-otevs s)))
+ ;;                                             (hstate-mem s)))
+ ;;                             (l-equiv (step-events (timed-event-ev (car (hstate-otevs s)))
+ ;;                                                   (timed-event-tm (car (hstate-otevs s)))
+ ;;                                                   (hstate-mem w)))))))
+ ;;   :rule-classes (:congruence))
+ 
+ (local (defthm A-proof-1
+          (implies (and (A s w)
+                        (good-hstatep (hodes-transf w))
+                        (good-odes-statep (odes-transf s)))                
+                   (A (odes-transf s)
+                      (hodes-transf w)))
+          :hints (("Goal" :in-theory (disable good-odes-statep good-hstatep
+                                              good-hstate-inductive
+                                              good-odes-inductive
+                                              valid-lo-tevs->=-tm
+                                              no-events-at-tm-top-of-queue-1
+                                              no-events-at-tm-top-of-queue-2)
+                   :use ((:instance step-events-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance step-memory-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))))
+                  ("Subgoal 3'"
+                   :use ((:instance step-events-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance insert-otevs-l-equiv-is-equal
+                                    (otevs (CDR (HSTATE-OTEVS W)))
+                                    (l (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                    (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                    (ODES-STATE-MEM S)))
+                                    (l-equiv (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                          (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                          (HSTATE-MEM W)))))
+                   :in-theory (disable INSERT-OTEVS-L-EQUIV-IS-EQUAL))
+                  ("Subgoal 2'"
+                   :use ((:instance step-events-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance insert-otevs-l-equiv-is-equal
+                                    (otevs (CDR (HSTATE-OTEVS W)))
+                                    (l (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                    (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                    (ODES-STATE-MEM S)))
+                                    (l-equiv (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                          (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                          (HSTATE-MEM W)))))
+                   :in-theory (disable INSERT-OTEVS-L-EQUIV-IS-EQUAL))
+                  ("Subgoal 1"
+                   :use ((:instance step-events-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance insert-otevs-l-equiv-is-equal
+                                    (otevs (CDR (HSTATE-OTEVS W)))
+                                    (l (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                    (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                    (ODES-STATE-MEM S)))
+                                    (l-equiv (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                          (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                          (HSTATE-MEM W)))))))))
+ (local (defthm A-implies-good-states
+          (implies (A s w)
+                   (and (good-odes-statep s)
+                        (good-hstatep w)))
+          :hints (("Goal" :in-theory (disable p-definition-rule
+                                              good-hstatep-definition-rule
+                                              good-odes-statep-definition-rule)))))
+ 
+ (defthmd A-is-a-bisimulation
+   (implies (and (A s w))
+            (A (odes-transf s)
+               (hodes-transf w)))
+   :hints (("Goal" :in-theory (disable A-definition-rule
+                                       hodes-transf-definition-rule
+                                       good-odes-statep-definition-rule
+                                       good-hstatep-definition-rule))))
 
-(defthmd c-constraints
-  (let ((z (if (< (sstate-ct y) (istate-ct x))
-               (witness-y-ct<-x-ct  y)
-             (witness-x-ct=y-ct x y))))
-    (implies (and (istatep x)
-                  (igood-statep x)
-                  (sstatep y)
-                  (sgood-statep y) 
-                  (C x y)
-                  (not (B x y)))
-             (and (C x z)
-                  (< (rankls z x) (rankls y x)))))
-  :hints (("goal" :use ((:instance c-constraints-1)
-                        (:instance c-constraints-2))
-           :in-theory (disable sgood-statep igood-statep sstatep
-                               istatep B C ref-map istate-Eh istate-sth
-                               witness-x-ct=y-ct
-                               witness-y-ct<-x-ct rankls))))
+ )
+
+;; HoptDES refines DES
+
+(defunc R (s)
+  "A refinement map from an OptDES state to a DES state"
+  :input-contract (hstatep s)
+  :output-contract (des-statep (R s))
+  (des-state (hstate-tm s) (hstate-otevs s) (hstate-mem s)))
+
+(defunbc good-des-statep (s)
+  :input-contract t
+  (and (des-statep s)
+       (valid-lo-tevs (des-state-tevs s) (des-state-tm s))))
+
+(defthm good-des-state-is-des-state-fw
+  (implies (good-des-statep x)
+           (des-statep x))
+  :rule-classes (:rewrite :forward-chaining))
+
+(defunbc B (s w)
+  "SKS relation between an OptDES state and a DES state"
+  :input-contract t
+  (and (good-hstatep s)
+       (good-des-statep w)
+       (des-state-equal (R s) w)))
+
+(defthm B-implies-good-states
+  (implies (B s w)
+           (and (good-hstatep s) (good-des-statep w)))
+  :rule-classes (:forward-chaining))
+
+(defthm R-good
+  (implies (good-hstatep s)
+           (B s (R s))))
+
+;; Not sure if it will be useful
+(defcong hstate-equal des-state-equal (R x) 1)
+
+;; LWFSK witness
+
+(defunbc C (x y)
+  :input-contract t
+  (and (good-hstatep x)
+       (good-des-statep y)
+       (or (B x y)
+           (and (history-valid (hstate-h x))
+                (consp (history-otevs (hstate-h x)))
+                (<= (des-state-tm y) (hstate-tm x))
+                (set-equiv (des-state-tevs y)
+                                 (history-otevs (hstate-h x)))
+                (set-equiv (des-state-mem y)
+                           (history-mem (hstate-h x)))))))
+
+(defthm C-implies-good-state-fw
+  (implies (C x y)
+           (and (good-hstatep x)
+                (good-des-statep y)))
+  :hints (("Goal" :in-theory (disable good-des-statep-definition-rule
+                                      good-hstatep-definition-rule))))
+
+(defunc rankls (y x)
+  :input-contract (and (des-statep y) (hstatep x))
+  :output-contract (natp (rankls y x))
+  (nfix (- (+ (hstate-tm x)
+              (len (events-at-tm (des-state-tevs y) (hstate-tm x))))
+           (des-state-tm y))))
+
+#|
+(defunc rankls (y x)
+  :input-contract (and (des-statep y) (hstatep x))
+  :output-contract (natp (rankls y x))
+  (nfix (- (1+ (hstate-tm x)) (des-state-tm y))))
+
+Consider the following 
+x = < 10, <>, m', <t, {(e,10)}, m>
+y  = < 10, {(e,10)}, m>
+
+where execution e modifies m to m'.
+
+x is a good-hstatep y is good-des-statep
+
+xCy holds
+
+xBy does not hold
+
+Hence we have to show that there is a z such that y --> z /\ xCz /\
+rankls(z,x) < rankls(y,x).
+
+rankls (y,x) = (- (1+ 10) 10) = 1
+
+y --> z 
+where z = <10, <>, mem'> 
+xCz since xBz holds.
+
+rankls(z,x)  = (- (1+ 10) 10) = 1
+
+Rankls(z,x) = rankls(y,x) and does not decrease.
+
+|#
+
+(encapsulate
+  nil
+  ;; remove-ev on ordererd list
+
+  (local (defthm o-lo-tep-member-equal
+    (implies (o-lo-tep (cons x l))
+             (not (member-equal x l)))
+    :hints (("goal" :in-theory (enable te-<-definition-rule o-lo-tep member-equal)))))
+                     
+  (local  (defthm o-lo-tep-noduplicates
+    (implies (o-lo-tep x)
+             (no-duplicatesp-equal x))
+    :hints (("goal" :in-theory (enable te-<-definition-rule no-duplicatesp-equal o-lo-tep)))))
+
+  (local (defthm remove-ev-not-member
+    (implies (and (o-lo-tep x) (timed-eventp tev)
+                  (not (member-equal tev x)))
+             (equal (remove-ev x tev)
+                    x))))
+
+  (defthm remove-ev-o-lo-tep
+    (implies (and (o-lo-tep x) (consp x))
+             (equal (remove-ev x (car x))
+                    (cdr x))))
+  )
+
+
+ (encapsulate
+  nil
+  (local (defthm remove-ev-member-1
+           (implies (and (lo-tep l) (timed-eventp tev)
+                         (not (equal x tev))
+                         (member-equal x l))
+                    (member-equal x (remove-ev l tev)))))
+                    
+  (local (defthm remove-ev-preserves-subset
+           (implies (and (lo-tep x) (lo-tep y) (timed-eventp tev)
+                         (subsetp-equal (double-rewrite x) (double-rewrite y)))
+                    (subsetp-equal (remove-ev x tev)
+                                   (remove-ev y tev)))
+           :hints (("goal" :in-theory (enable  subsetp-equal)))))
+
+  (defthmd remove-ev-preserves-set-equiv
+           (implies (and (lo-tep x) (lo-tep y) (timed-eventp tev)
+                         (set-equiv  x y))
+                    (set-equiv (remove-ev x tev)
+                               (remove-ev y tev)))
+           :hints (("goal" :in-theory (e/d (set-equiv)))))
+
+  )
+           
+
+(encapsulate
+  nil
+  (local (defthm l1
+           (implies (and (lo-tep l) (timed-eventp tev) (timep tm)
+                         (member-equal tev l)
+                         (equal (timed-event-tm tev) tm))
+                    (member-equal tev (events-at-tm l tm)))
+           :hints (("goal" :in-theory (enable member-equal)))))
+
+  (local (defthm  events-at-tm-l-subsetp
+           (implies (and (lo-tep x) (lo-tep y) (timep tm)
+                         (subsetp-equal x y))
+                    (subsetp-equal (events-at-tm x tm)
+                                   (events-at-tm y tm)))
+           :hints (("goal" :in-theory (enable subsetp-equal)))))
+
+  (defthm  events-at-tm-l-set-equiv
+    (implies (and (lo-tep x) (lo-tep y) (timep tm)
+                  (set-equiv x y))
+             (set-equiv (events-at-tm x tm)
+                        (events-at-tm y tm)))
+    :hints (("goal" :in-theory (enable set-equiv))))
+  )
+
+(defthm new-tevs-append-insert-lemma
+   (implies (and (lo-tep l)
+                 (o-lo-tep x) (consp x)
+                 (lo-tep y) (set-equiv x y))
+            (set-equiv (append l (remove-ev y (car x)))
+                       (insert-otevs l (cdr x))))
+   :hints (("Goal" :do-not-induct t
+            :use ((:instance remove-ev-preserves-set-equiv
+                             (x y) (y x)
+                             (tev (car x))))
+            :in-theory (disable remove-ev-definition-rule
+                                remove-ev-preserves-set-equiv))))
+
+(encapsulate
+ nil
+ ;; Case when there is an event to be picked (the first one) in
+ ;; HoptDES at current time. In this case , we show that (R
+ ;; (hodes-transf s)) is a witness for lwfsk2a.
+
+ (local (in-theory (disable eventp valid-lo-tevs->=-tm
+                            no-events-at-tm-top-of-queue-1
+                            no-events-at-tm-top-of-queue-2)))
+ 
+ (local (defthmd lwfsk2a-B
+          (implies (B s w)
+                   (B (hodes-transf s)
+                      (R (hodes-transf s))))
+          :hints (("goal" :in-theory (disable good-des-statep
+                                              good-hstatep
+                                              hodes-transf
+                                              r-definition-rule)
+                   :use ((:instance good-hstate-inductive))))))
+
+ (local (in-theory (disable good-histp-definition-rule)))
+
+ (local (defthm lwfsk2a-l1-empty
+          (implies (and (B s w)
+                        (endp (hstate-otevs s)))
+                   (and (spec-transp w (R (hodes-transf s)))
+                        (B (hodes-transf s) (R (hodes-transf s)))))
+          :hints (("Goal" :in-theory (e/d (valid-lo-tevs-definition-rule
+                                           good-histp-definition-rule) ())))))
+
+
+ ;; TODO: why this intermediate lemma is needed for lwfsk2a-spec-step
+ (local (defthm e1
+          (implies (and (B s w)
+                        (consp (hstate-otevs s))
+                        (equal (hstate-tm s)
+                               (timed-event-tm (car (hstate-otevs s)))))
+                   (and (equal (timed-event-tm (car (hstate-otevs s))) (des-state-tm w))
+                        (timed-eventp (car (hstate-otevs s)))
+                        (member-equal (car (hstate-otevs s)) (des-state-tevs w))
+                        (equal (hstate-tm s) (des-state-tm w))
+                        (set-equiv
+                         (insert-otevs (step-events (timed-event-ev (car (hstate-otevs s)))
+                                                    (hstate-tm s)
+                                                    (hstate-mem s))
+                                       (cdr (hstate-otevs s)))
+                         (append (step-events (timed-event-ev (car (hstate-otevs s)))
+                                              (des-state-tm w)
+                                              (des-state-mem w))
+                                 (remove-ev (des-state-tevs w)
+                                            (car (hstate-otevs s)))))
+                        (set-equiv (step-memory (timed-event-ev (car (hstate-otevs s)))
+                                                (hstate-tm s)
+                                                (hstate-mem s))
+                                   (step-memory (timed-event-ev (car (hstate-otevs s)))
+                                                (des-state-tm w)
+                                                (des-state-mem w)))))
+          :hints (("Subgoal 2'" :in-theory (disable step-events-congruence)
+                   :use ((:instance step-events-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S))))
+                                    (tm (DES-STATE-TM W))
+                                    (mem (DES-STATE-MEM W))
+                                    (mem-equiv (HSTATE-MEM S)))))
+                  ("Subgoal 1'" :in-theory (disable step-memory-congruence)
+                   :use ((:instance step-memory-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S))))
+                                    (tm (DES-STATE-TM W))
+                                    (mem (DES-STATE-MEM W))
+                                    (mem-equiv (HSTATE-MEM S))))))))
+ 
+ (local (defthmd lwfsk2a-spec-step
+          (implies (and (b s w)
+                        (consp (hstate-otevs s))
+                        (equal (hstate-tm s)
+                               (timed-event-tm (car (hstate-otevs s)))))
+                   (spec-ev-transp w (r (hodes-transf s))))
+          :hints (("goal" :use ((:instance spec-ev-transp-suff
+                                           (tev (car (hstate-otevs s)))
+                                           (v (r (hodes-transf s))))
+                                (:instance e1))
+                   :in-theory (disable spec-ev-transp-suff 
+                                       acl2::set-equiv-is-an-equivalence
+                                       acl2::commutativity-of-append-under-set-equiv
+                                       e1
+                                       spec-ev-transp)))))
+
+ (defthm lwfsk2a-l1-cons
+   (implies (and (B s w)
+                 (consp (hstate-otevs s))
+                 (equal (hstate-tm s)
+                        (timed-event-tm (car (hstate-otevs s)))))
+            (and (spec-ev-transp w (R (hodes-transf s)))
+                 (B (hodes-transf s) (R (hodes-transf s)))))
+   :hints (("goal" :use ((:instance lwfsk2a-spec-step)
+                         (:instance lwfsk2a-B)))))
+
+ (local (defthm events-at-tm-cons
+          (implies (and (lo-tep x) (consp x))
+                   (events-at-tm x (timed-event-tm (car x))))))
+
+ (local (defthm lwfsk2a-l1-events-at-tm
+          (implies (and (B s w)
+                        (consp (hstate-otevs s))
+                        (equal (hstate-tm s)
+                               (timed-event-tm (car (hstate-otevs s)))))
+                   (events-at-tm (des-state-tevs w) (des-state-tm w)))
+          :hints (("Goal" :in-theory (disable
+                                      events-at-tm-l-set-equiv
+                                      timed-event eventp)
+                   :use ((:instance events-at-tm-l-set-equiv
+                                    (x (des-state-tevs w))
+                                    (y (hstate-otevs s))
+                                    (tm (hstate-tm s))))))))
+
+ (defthmd lwfsk2a-lemma
+   (implies (and (B s w)
+                 (equal (hstate-tm s)
+                        (timed-event-tm (car (hstate-otevs s)))))
+            (and (spec-transp w (R (hodes-transf s)))
+                 (B (hodes-transf s) (R (hodes-transf s)))))
+   :hints (("Goal" :cases ((consp (hstate-otevs s)))
+            :in-theory (e/d ()(r-definition-rule
+                               spec-ev-transp
+                               des-state-equal-definition-rule
+                               hodes-transf-definition-rule
+                               lwfsk2a-l1-events-at-tm
+                               lwfsk2a-l1-cons)))
+           ("Subgoal 1" :use ((:instance lwfsk2a-l1-cons)
+                              (:instance lwfsk2a-l1-events-at-tm)))))
+ )
+ 
+(defthm no-event-<-tm
+  (implies (and (lo-tep l) (timep tm1) (timep tm2)
+                (< tm1 tm2)
+                (valid-lo-tevs l tm2))
+           (not (events-at-tm l tm1)))) 
+
+(defthm valid-nil
+          (implies (timep tm)
+                   (valid-lo-tevs nil tm)))
+
+(in-theory (disable valid-lo-tevs-definition-rule))
+
+(encapsulate
+ nil
+ (local (defthmd lwfsk2d-l1
+          (implies (and (B s w)
+                        (not (equal (hstate-tm s)
+                                    (timed-event-tm (car (hstate-otevs s))))))
+                   (spec-transp w (des-state (1+ (des-state-tm w))
+                                             (des-state-tevs w)
+                                             (des-state-mem w))))
+          :hints (("Goal" :in-theory (disable (:definition events-at-tm-definition-rule)
+                                              (:definition spec-ev-transp)
+                                              valid-lo-tevs->=-tm
+                                              no-events-at-tm-top-of-queue-1
+                                              no-events-at-tm-top-of-queue-2
+                                              events-at-tm-l-set-equiv)
+                   :use ((:instance no-events-at-tm-top-of-queue-1
+                                    (E (hstate-otevs s))
+                                    (tm (hstate-tm s)))
+                         (:instance events-at-tm-l-set-equiv
+                                    (x (des-state-tevs w))
+                                    (y (hstate-otevs s))
+                                    (tm (des-state-tm w))))))))
+
+
+ (local (defthmd lwfsk2d-l2a
+          (implies (and (B s w)
+                        (not (equal (hstate-tm s)
+                                    (timed-event-tm (car (hstate-otevs s))))))
+                   (< (des-state-tm w) (hstate-tm (hodes-transf s))))
+          :hints (("Goal" :in-theory (disable no-events-at-tm-top-of-queue-2
+                                              events-at-tm-l-set-equiv)
+                   :use ((:instance no-events-at-tm-top-of-queue-2
+                                    (E (hstate-otevs s))
+                                    (tm (hstate-tm s)))
+                         (:instance events-at-tm-l-set-equiv
+                                    (x (hstate-otevs s))
+                                    (y (des-state-tevs w))
+                                    (tm (hstate-tm s))))))))
+
+ (local (defthm bla
+          (implies (and (timep x) (timep y)
+                        (< y x))
+                   (<= (1+ y) x))))
+
+ (local (defthmd lwfsk2d-l2b
+          (implies (and (B s w)
+                        (not (equal (hstate-tm s)
+                                    (timed-event-tm (car (hstate-otevs s))))))
+                   (<= (1+ (des-state-tm w)) (hstate-tm (hodes-transf s))))
+          :hints (("Goal" :use ((:instance lwfsk2d-l2a))
+                   :in-theory (e/d (timep) (valid-lo-tevs->=-tm
+                                            no-events-at-tm-top-of-queue-1
+                                            no-events-at-tm-top-of-queue-2
+                                            hodes-transf-definition-rule))))))
+
+ (local (defthmd lwfsk2d-l2c
+          (implies (and (B s w)
+                        (not (equal (hstate-tm s)
+                                    (timed-event-tm (car (hstate-otevs s))))))
+                   (let ((u (hodes-transf s)))
+                     (and (<= (1+ (des-state-tm w)) (hstate-tm u))
+                          (set-equiv (des-state-tevs w)
+                                     (history-otevs (hstate-h u)))
+                          (set-equiv (des-state-mem w)
+                                     (history-mem (hstate-h u))))))
+          :hints (("Goal" :in-theory (e/d (good-histp-definition-rule
+                                           lwfsk2d-l2b
+                                           valid-lo-tevs->=-tm)
+                                          (valid-lo-tevs-definition-rule))))))
+
+ (local (defthmd  C-good-state-valid-lo-tevs
+          (implies
+           (and
+            (valid-lo-tevs (hstate-otevs s)
+                           (timed-event-tm (car (hstate-otevs s))))
+            (<= (+ 1 (des-state-tm w))
+                (timed-event-tm (car (hstate-otevs s))))
+            (set-equiv (des-state-tevs w)
+                       (hstate-otevs s))
+            (des-state-tevs w)
+            (hstatep s)
+            (valid-lo-tevs (hstate-otevs s)
+                           (hstate-tm s))
+            (des-statep w))
+           (valid-lo-tevs (des-state-tevs w)
+                          (+ 1 (des-state-tm w))))
+          :hints (("Goal" :use ((:instance valid-lo-tevs->=-tm
+                                           (t1 (timed-event-tm (car (hstate-otevs s))))
+                                           (t2 (1+ (des-state-tm w)))
+                                           (E (hstate-otevs s)))
+                                (:instance valid-lo-tevs-o-lo-tep
+                                           (E (hstate-otevs s))))
+                   :in-theory (e/d()
+                                  (valid-lo-tevs-o-lo-tep
+                                   valid-lo-tevs->=-tm
+                                   valid-lo-tevs-definition-rule
+                                   ordered-lo-tep-definition-rule timed-event
+                                   des-state-equal-definition-rule))))))
+ 
+ (local (defthmd lwfsk2d-l2-cons
+          (let ((u (hodes-transf s))
+                (v (des-state (1+ (des-state-tm w))
+                              (des-state-tevs w)
+                              (des-state-mem w))))
+            (implies (and (B s w)
+                          (consp (hstate-otevs s))
+                          (not (equal (hstate-tm s)
+                                      (timed-event-tm (car (hstate-otevs s))))))
+                     (C u v)))
+          :hints (("Goal" :in-theory (e/d () ( o-lo-tep
+                                               valid-lo-tevs-definition-rule
+                                               des-state-equal-definition-rule
+                                               good-histp-definition-rule
+                                               hstate-equal-definition-rule))
+                   :use ((:instance lwfsk2d-l2c)
+                         (:instance good-hstate-inductive)))
+                  ("Subgoal 3'" :in-theory (disable C-good-state-valid-lo-tevs)
+                   :use ((:instance C-good-state-valid-lo-tevs))))))
+
+
+
+ (local (defthmd lwfsk2d-l2-empty
+          (let ((u (hodes-transf s))
+                (v (des-state (1+ (des-state-tm w))
+                              (des-state-tevs w)
+                              (des-state-mem w))))
+            (implies (and (B s w)
+                          (endp (hstate-otevs s)))
+                     (C u v)))
+          :hints (("Goal" :in-theory (e/d (good-histp-definition-rule)
+                                          (valid-lo-tevs->=-tm
+                                           valid-lo-tevs-definition-rule
+                                           no-events-at-tm-top-of-queue-1
+                                           no-events-at-tm-top-of-queue-2))))))
+
+ (local (defthmd lwfsk2d-l2
+          (let ((u (hodes-transf s))
+                (v (des-state (1+ (des-state-tm w))
+                              (des-state-tevs w)
+                              (des-state-mem w))))
+            (implies (and (B s w)
+                          (not (equal (hstate-tm s)
+                                      (timed-event-tm (car (hstate-otevs s))))))
+                     (and (C u v)
+                          (good-des-statep v))))
+          :hints (("Goal" :cases ((consp (hstate-otevs s)))
+                   :use ((:instance lwfsk2d-l2-empty)
+                         (:instance lwfsk2d-l2-cons))
+                   :in-theory (disable hodes-transf-definition-rule
+                                       b-definition-rule
+                                       c-definition-rule)))))
+
+ (defthmd lwfsk2d-lemma
+   (let ((u (hodes-transf s))
+         (v (des-state (1+ (des-state-tm w))
+                       (des-state-tevs w)
+                       (des-state-mem w))))
+     (implies (and (B s w)
+                   (not (equal (hstate-tm s)
+                               (timed-event-tm (car (hstate-otevs s))))))
+              (and (good-des-statep v)
+                   (spec-transp w v)
+                   (C u v))))
+   :hints (("Goal" 
+            :use ((:instance lwfsk2d-l1)
+                  (:instance lwfsk2d-l2))
+            :in-theory (disable hodes-transf-definition-rule
+                                b-definition-rule
+                                c-definition-rule))))
+  )
+
+(defun-sk lwfsk2a (u w)
+  (exists v
+    (and (B u v)
+         (spec-transp w v)))
+  :witness-dcls ((declare (xargs :guard (and (hstatep u) (des-statep w))
+                                 :verify-guards nil))))
+
+(verify-guards lwfsk2a)
+
+(defun-sk lwfsk2d (u w)
+  (exists v
+    (and (C u v)
+         (spec-transp w v)))
+  :witness-dcls ((declare (xargs :guard (and (hstatep u) (des-statep w))
+                                 :verify-guards nil))))
+
+(verify-guards lwfsk2d)
+
+;; 2a holds when s and w have an event is scheduled (both have same
+;; otevs) at current time (both s and w have same time) While 2d holds
+;; when s and w have no events scheduled at current time.
+
+
+(defthm R-preserves-good-state
+  (implies (good-hstatep s)
+           (good-des-statep (R s)))
+  :rule-classes (:forward-chaining))
+
+(defthm B-is-a-LWFSK
+  (implies (and ;; (good-hstatep s)
+                ;; (good-des-statep w)
+                (B s w))
+           (or (lwfsk2a (hodes-transf s) w)
+               (lwfsk2d (hodes-transf s) w)))
+  :hints (("Goal" :cases ((not (equal (hstate-tm s)
+                                      (timed-event-tm (car (hstate-otevs s)))))))
+          ("Subgoal 2"
+           :use ((:instance lwfsk2a-suff
+                            (u (hodes-transf s))
+                            (v (R (hodes-transf s))))
+                 (:instance lwfsk2a-lemma))
+           :in-theory (disable hodes-transf-definition-rule
+                               good-des-statep
+                               b-definition-rule
+                               c-definition-rule
+                               good-des-statep-definition-rule
+                               good-hstatep-definition-rule
+                               r-definition-rule
+                               lwfsk2a lwfsk2a-suff
+                               lwfsk2d lwfsk2d-suff))
+          ("Subgoal 1"
+           :use ((:instance lwfsk2d-suff
+                            (u (hodes-transf s))
+                            (v (des-state (1+ (des-state-tm w))
+                                          (des-state-tevs w)
+                                          (des-state-mem w))))
+                 (:instance lwfsk2d-lemma))
+           :in-theory (disable hodes-transf-definition-rule
+                               b-definition-rule
+                               c-definition-rule
+                               good-des-statep-definition-rule
+                               good-hstatep-definition-rule
+                               r-definition-rule
+                               lwfsk2a lwfsk2a-suff
+                               lwfsk2d lwfsk2d-suff)))
+  :rule-classes nil)
+
+(defun-sk lwfsk2f (x y)
+  (exists z
+    (and (C x z)
+         ;; (good-des-statep z)
+         (spec-transp y z)
+         (< (rankls z x) (rankls y x))))
+  :witness-dcls ((declare (xargs :guard (and (hstatep x) (des-statep y))
+                                 :verify-guards nil))))
+
+(verify-guards lwfsk2f)
+
+(encapsulate
+ nil
+
+ (defunc C-witness-y-tm<x-tm (y)
+   :input-contract (des-statep y)
+   :output-contract (des-statep (C-witness-y-tm<x-tm y))
+   (des-state (1+ (des-state-tm y))
+              (des-state-tevs y)
+              (des-state-mem y)))
+
+ (local (defthm bla
+          (implies (and (timep x) (timep y)
+                        (< y x))
+                   (<= (1+ y) x))))
+
+ (local (defthm valid-lo-tevs-y-x-tm
+          (implies (and (good-hstatep x)  
+                        (C x y)
+                        (< (des-state-tm y) (hstate-tm x)))
+                   (valid-lo-tevs (des-state-tevs y) (hstate-tm x)))))
+ 
+ 
+ (local (in-theory (disable no-events-at-tm-top-of-queue-2
+                            no-events-at-tm-top-of-queue-1)))
+
+ ;; These along with valid-lo-tevs->=-tm are not good rewrite rules
+ ;; and often results in significant slow down.
+ 
+ (defthm lwfsk2f-1
+   (let ((z (C-witness-y-tm<x-tm y)))
+     (implies (and (C x y)
+                   (not (B x y))
+                   (< (des-state-tm y) (hstate-tm x)))
+              (and (C x z)
+                   (good-des-statep z)
+                   (spec-transp y z)
+                   (< (rankls z x) (rankls y x))))))
+
+ 
+ )
+
+;; Proof for (C x (C-witness-y-tm=x-tm x y)) follows
+(encapsulate
+ nil
+ 
+ (defunc C-witness-y-tm=x-tm (x y)
+   :input-contract (and (hstatep x) (des-statep y))
+   :output-contract (des-statep (C-witness-y-tm=x-tm x y))
+   (let* ((y-tm (des-state-tm y))
+          (y-tevs (des-state-tevs y))
+          (y-mem (des-state-mem y))
+          (h (hstate-h x))
+          (hotevs (history-otevs h)))
+     (if (consp hotevs)
+         (let* ((tev (car hotevs))
+                (ev (timed-event-ev tev))
+                (new-evs (step-events ev y-tm y-mem))
+                (z-mem (step-memory ev y-tm y-mem))
+                (z-tevs (remove-ev y-tevs tev))
+                (z-tevs (append new-evs z-tevs)))
+           (des-state y-tm z-tevs z-mem))
+       (des-state (1+ y-tm) y-tevs y-mem))))
+
+
+ (in-theory (enable good-histp-definition-rule))
+ (in-theory (disable valid-lo-tevs->=-tm 
+                     valid-lo-tevs-definition-rule))
+
+ 
+ ;; BOZO the proof is simple I am not able to contol the rewriter 
+ (skip-proofs
+  (local (defthm history-tevs-car
+           (implies (and (good-hstatep x)
+                         (history-valid (hstate-h x))
+                         (consp (history-otevs (hstate-h x))))
+                    (equal (timed-event-tm (car (history-otevs (hstate-h x))))
+                           (hstate-tm x)))
+           :hints (("Goal" :do-not '(eliminate-destructors generalize)))))
+  )
+
+ (local (defthmd lwfsk2f-spec-ev-transp
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (C x y)
+                        (not (B x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (spec-ev-transp y (C-witness-y-tm=x-tm x y)))
+          :hints (("Goal" :in-theory (disable spec-ev-transp-suff)
+                   :use ((:instance spec-ev-transp-suff
+                                    (w y)
+                                    (v (C-witness-y-tm=x-tm x y))
+                                    (tev (car (history-otevs (hstate-h x))))))))))
+ 
+ (local (defthmd lwfsk2f-event-at-y-tm
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (C x y)
+                        (not (B x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (events-at-tm (des-state-tevs y) (des-state-tm y)))
+          :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv)
+                   :use ((:instance events-at-tm-l-set-equiv
+                                    (x (history-otevs (hstate-h x)))
+                                    (y (des-state-tevs y))
+                                    (tm (timed-event-tm
+                                         (car (history-otevs (hstate-h x)))))))))))
+                   
+ (defthmd lwfsk2f-spec-transp
+   (implies (and (C x y)
+                 (not (B x y))
+                 (equal (des-state-tm y) (hstate-tm x)))
+            (spec-transp y (C-witness-y-tm=x-tm x y)))
+   :hints (("Goal" :in-theory (e/d (spec-transp-definition-rule)
+                                   (good-hstatep-definition-rule
+                                    good-des-statep-definition-rule
+                                    c-witness-y-tm=x-tm-definition-rule
+                                    des-state-equal-definition-rule
+                                    c-definition-rule
+                                    b-definition-rule))
+            :use ((:instance lwfsk2f-event-at-y-tm)
+                  (:instance lwfsk2f-spec-ev-transp)))))
+
+ )
+
+(in-theory (disable eventp))
+
+(encapsulate
+ nil
+ (local (defthm events-at-tm-distributes-over-append
+          (implies (and (lo-tep l1) (lo-tep l2) (timep tm))
+                   (equal (events-at-tm (append l1 l2) tm)
+                          (append (events-at-tm l1 tm)
+                                  (events-at-tm l2 tm))))))
+
+ (local (defthm no-new-evs-at-tm
+          (implies (and (eventp ev)
+                        (timep tm)
+                        (memoryp mem))
+                   (not (events-at-tm (step-events ev tm mem) tm)))
+          :hints (("Goal" :use ((:instance step-events-contract)
+                                (:instance no-event-<-tm
+                                           (l (step-events ev tm mem))
+                                           (tm1 tm)
+                                           (tm2 (1+ tm))))
+                   :in-theory (e/d (timep) (step-events-contract
+                                            no-event-<-tm))))))
+ 
+ (local (defthm events-at-tm-remove-ev
+          (implies (and (timed-eventp tev) (lo-tep E)
+                        (timep tm))
+                   (equal (events-at-tm (remove-ev E tev) tm)
+                          (remove-ev (events-at-tm E tm) tev)))))
+
+ (local (defthm l1
+          (implies (and (timed-eventp tev) (timep tm)
+                        (lo-tep E)
+                        (member-equal tev E))
+                   (< (len (remove-ev E tev))
+                      (len E)))))
+
+ (local (defthm l3
+          (implies (and (timed-eventp tev) (timep tm)
+                        (lo-tep l2) (memoryp mem)
+                        (member-equal tev (events-at-tm l2 tm)))
+                   (< (len (events-at-tm (append (step-events
+                                                  (timed-event-ev tev)
+                                                  tm mem)
+                                                 (remove-ev l2 tev))
+                                         tm))
+                      (len (events-at-tm l2 tm))))
+          :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv
+                                              events-at-tm-definition-rule
+                                              timed-event
+                                              step-events-contract)
+                   :use ((:instance step-events-contract (ev (timed-event-ev tev))))
+                   :do-not-induct t))))
+
+ (local (defthm l3a
+          (implies (and (lo-tep l) (consp l))
+                   (member-equal (car l) (events-at-tm l (timed-event-tm (car l)))))
+          :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv)))))
+
+ (local (defthm l3b
+          (implies (and (lo-tep l2) (memoryp mem) (consp l2))
+                   (< (len (events-at-tm (append (step-events
+                                                  (timed-event-ev (car l2))
+                                                  (timed-event-tm (car l2)) mem)
+                                                 (remove-ev l2 (car l2)))
+                                         (timed-event-tm (car l2))))
+                      (len (events-at-tm l2 (timed-event-tm (car l2))))))
+          :hints (("Goal" :use ((:instance l3 (tev (car l2))
+                                           (tm (timed-event-tm (car l2)))))
+                   :in-theory (disable l3 events-at-tm-l-set-equiv)
+                   :do-not-induct t)
+                  ("Goal'''" :in-theory (enable member-equal events-at-tm-definition-rule))))) 
+
+ (local (in-theory (disable l1 l3 events-at-tm-remove-ev
+                            no-new-evs-at-tm
+                            events-at-tm-distributes-over-append)))
+
+
+ ;; Also in another encapsulate consider making it non-local
+ ;; BOZO the proof is simple I am not able to contol the rewriter 
+ (skip-proofs
+  (local (defthm history-tevs-car
+           (implies (and (good-hstatep x)
+                         (history-valid (hstate-h x))
+                         (consp (history-otevs (hstate-h x))))
+                    (equal (timed-event-tm (car (history-otevs (hstate-h x))))
+                           (hstate-tm x)))
+           :hints (("Goal" :do-not '(eliminate-destructors generalize)))))
+  )
+
+
+ (local (defthm l3c (implies (and (good-hstatep x)
+                                  (good-des-statep y)
+                                  (c x y)
+                                  (not (b x y))
+                                  (equal (des-state-tm y) (hstate-tm x)))
+                             (member-equal (car (history-otevs (hstate-h x)))
+                                           (events-at-tm (des-state-tevs y)
+                                                         (des-state-tm y))))
+          :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv
+                                              b-definition-rule
+                                              good-des-statep-definition-rule
+                                              good-hstatep-definition-rule)
+                   :use ((:instance events-at-tm-l-set-equiv
+                                    (y (history-otevs (hstate-h x)))
+                                    (x (des-state-tevs y))
+                                    (tm (des-state-tm y)))
+                         (:instance history-tevs-car)
+                         (:instance l3a (l (history-otevs (hstate-h x)))))))))
+
+ (defthmd l4
+   (implies (and (C x y)
+                 (not (B x y))
+                 (equal (des-state-tm y) (hstate-tm x)))
+            (< (rankls (C-witness-y-tm=x-tm x y) x)
+               (rankls y x)))
+   :hints (("Goal" :in-theory (disable l3b l3c
+                                       events-at-tm-l-set-equiv
+                                       b-definition-rule history
+                                       historyp
+                                       events-at-tm-definition-rule)
+            :use ((:instance l3c)
+                  (:instance l3
+                             (tev (car (history-otevs (hstate-h x))))
+                             (tm (timed-event-tm (car (history-otevs (hstate-h x)))))
+                             (l2 (DES-STATE-TEVS Y))
+                             (mem (DES-STATE-MEM Y)))
+                  (:instance l3b
+                             (l2 (DES-STATE-TEVS Y))
+                             (mem (DES-STATE-MEM Y)))
+                  (:instance history-tevs-car)))))
 )
 
+                  
+(encapsulate
+ nil
+ (local (defthm remove-ev-valid-1
+          (implies (and (o-lo-tep l) (timep tm) (consp l)
+                        (valid-lo-tevs l tm))
+                   (valid-lo-tevs (remove-ev l (car l)) tm))
+          :hints (("Goal" :in-theory (enable valid-lo-tevs-definition-rule)))))
+
+ (local (defthm remove-ev-valid-2
+          (implies (and (o-lo-tep l) (timep tm) (consp l)
+                        (lo-tep l-equiv)
+                        (set-equiv l l-equiv)
+                        (valid-lo-tevs l tm))
+                   (valid-lo-tevs (remove-ev l-equiv (car l)) tm))
+          :hints (("Goal" :use ((:instance remove-ev-valid-1)
+                                (:instance remove-ev-preserves-set-equiv
+                                           (x l) (y l-equiv)
+                                           (tev (car l)))
+                                (:instance valid-lo-tevs-setequiv
+                                           (l2 (remove-ev l (car l)))
+                                           (l1 (remove-ev l-equiv (car l)))
+                                           (tm tm)))
+                   :in-theory (disable valid-lo-tevs-setequiv
+                                       remove-ev-valid-1)
+                   :do-not-induct t))))
+ 
+ ;; repeated
+ (local (defthm valid-lo-tevs-append
+          (implies (and (lo-tep l1) (lo-tep l2)
+                        (timep tm1) (timep tm2)
+                        (>= tm2 tm1)
+                        (valid-lo-tevs l1 tm1)
+                        (valid-lo-tevs l2 tm2))
+                   (valid-lo-tevs (append l1 l2) tm1))
+          :hints (("Goal" :in-theory (e/d (valid-lo-tevs-definition-rule)
+                                          (timed-event eventp))))))
+
+ (local (defthm lemma-1
+          (implies (and (lo-tep l1) (timep tm) (consp l2)
+                        (o-lo-tep l2)
+                        (lo-tep l2-equiv)
+                        (set-equiv l2 l2-equiv)
+                        (valid-lo-tevs l1 (1+ tm))
+                        (valid-lo-tevs l2 tm))
+                   (valid-lo-tevs (append l1 (remove-ev l2-equiv (car l2))) tm))
+          :hints (("Goal" :use ((:instance valid-lo-tevs->=-tm
+                                           (E l1) (t1 (1+ tm))
+                                           (t2 tm)))
+                   :do-not-induct t
+                   :in-theory (disable remove-ev-o-lo-tep timep
+                                       valid-lo-tevs-o-lo-tep
+                                       o-lo-tep-definition-rule
+                                       lo-tep
+                                       valid-lo-tevs-definition-rule
+                                       remove-ev-definition-rule
+                                       timed-event)))))
+ 
+ (local (defthmd lwfsk2f-C-1
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (C x y)
+                        (not (B x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (good-des-statep (C-witness-y-tm=x-tm x y)))
+          :hints (("Goal" :in-theory (disable remove-ev-o-lo-tep
+                                              valid-lo-tevs-o-lo-tep
+                                              o-lo-tep-definition-rule
+                                              lo-tep
+                                              valid-lo-tevs-definition-rule
+                                              remove-ev-definition-rule
+                                              timed-event)))))
+
+ (in-theory (disable  acl2::commutativity-of-append-under-set-equiv))
+
+ (local (defthm c3
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (c x y)
+                        (not (b x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (equal (des-state-tm (R x)) (des-state-tm (c-witness-y-tm=x-tm x y))))))
+
+ (skip-proofs
+  (defthm c2
+    (implies (and (good-hstatep x)
+                  (good-des-statep y)
+                  (c x y)
+                  (not (b x y))
+                  (equal (des-state-tm y) (hstate-tm x)))
+             (set-equiv (des-state-tevs (r x))
+                        (des-state-tevs (c-witness-y-tm=x-tm x y))))))
+ 
+ (skip-proofs
+  (local (defthm c1
+           (implies (and (good-hstatep x)
+                         (good-des-statep y)
+                         (c x y)
+                         (not (b x y))
+                         (equal (des-state-tm y) (hstate-tm x)))
+                    (set-equiv (des-state-mem (c-witness-y-tm=x-tm x y))
+                               (des-state-mem (r x))))))
+  )
+
+ (local (defthm lwfsk2f-C-2
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (C x y)
+                        (not (B x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (des-state-equal (R x) (C-witness-y-tm=x-tm x y)))
+          :hints (("Goal" :in-theory (disable
+                                      good-des-statep-definition-rule
+                                      good-hstatep-definition-rule
+                                      c-witness-y-tm=x-tm-definition-rule
+                                      c-definition-rule
+                                      B-definition-rule
+                                      r-definition-rule
+                                      C-implies-good-state-fw)
+                   :use ((:instance C-implies-good-state-fw))))))
+
+ (local (defthm lwfsk2f-C-3
+          (implies (and (C x y)
+                        (not (B x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (B x (C-witness-y-tm=x-tm x y)))
+          :hints (("Goal"
+                   :use ((:instance lwfsk2f-C-1)
+                         (:instance lwfsk2f-C-2)
+                         (:instance B-definition-rule
+                                    (s x)
+                                    (w (C-witness-y-tm=x-tm x y))))
+                   :in-theory (disable des-state-equal-definition-rule
+                                       good-des-statep-definition-rule
+                                       good-hstatep-definition-rule
+                                       c-witness-y-tm=x-tm-definition-rule
+                                       c-definition-rule
+                                       b-definition-rule
+                                       r-definition-rule lwfsk2f-C-2
+                                       lwfsk2f-C-1)))))
+
+
+ (local (defthm lwfsk2f-C-4
+          (implies (and (C x y)
+                        (not (B x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (C x (C-witness-y-tm=x-tm x y)))
+          :hints (("Goal"
+                   :use ((:instance lwfsk2f-C-1)
+                         (:instance lwfsk2f-C-3)
+                         (:instance C-definition-rule
+                                    (x x)
+                                    (y (C-witness-y-tm=x-tm x y))))
+                   :in-theory (disable des-state-equal-definition-rule
+                                       good-des-statep-definition-rule
+                                       good-hstatep-definition-rule
+                                       c-witness-y-tm=x-tm-definition-rule
+                                       c-definition-rule
+                                       b-definition-rule
+                                       r-definition-rule lwfsk2f-C-2
+                                       lwfsk2f-C-1)))))
+
+ (defthm lwfsk2f-C-5
+   (implies (and (C x y)
+                 (not (B x y))
+                 (equal (des-state-tm y) (hstate-tm x)))
+            (and (C x (C-witness-y-tm=x-tm x y))
+                 (good-des-statep (C-witness-y-tm=x-tm x y))
+                 (spec-transp y (C-witness-y-tm=x-tm x y))
+                 (< (rankls (C-witness-y-tm=x-tm x y) x)
+                    (rankls y x))))
+   :hints (("Goal"
+            :use ((:instance lwfsk2f-C-1)
+                  (:instance lwfsk2f-C-4)
+                  (:instance l4)
+                  (:instance lwfsk2f-spec-transp))
+                  :in-theory (disable des-state-equal-definition-rule
+                                      good-des-statep-definition-rule
+                                      good-hstatep-definition-rule
+                                      c-witness-y-tm=x-tm-definition-rule
+                                      c-definition-rule
+                                      b-definition-rule
+                                      r-definition-rule lwfsk2f-C-4
+                                      spec-transp-definition-rule
+                                      lwfsk2f-C-1 lwfsk2f-C-2
+                                      lwfsk2f-C-3
+                                      ACL2::DEFAULT-LESS-THAN-1
+                                      ACL2::DEFAULT-LESS-THAN-2
+                                      good-des-statep-contract
+                                      good-hstatep-contract
+                                      (:rewrite events-at-tm-l-set-equiv)))))
+ (defthmd case-exhaustive
+   (implies (and (good-hstatep x)
+                 (good-des-statep y)
+                 (C x y)
+                 (not (B x y)))
+            (<= (des-state-tm y) (hstate-tm x))))
+  
+ (defthmd lwfsk2f-C
+   (let ((z (if (< (des-state-tm y) (hstate-tm x))
+                (C-witness-y-tm<x-tm y)
+              (c-witness-y-tm=x-tm x y)))) 
+     (implies (and (good-hstatep x)
+                   (good-des-statep y)
+                   (C x y)
+                   (not (B x y)))
+              (and (C x z)
+                   (good-des-statep z)
+                   (spec-transp y z)
+                   (< (rankls z x) (rankls y x)))))
+   :hints (("Goal"
+            :cases ((< (des-state-tm y) (hstate-tm x))
+                    (= (des-state-tm y) (hstate-tm x)))
+            :use ((:instance case-exhaustive)
+                  (:instance lwfsk2f-C-5)
+                  (:instance lwfsk2f-1))
+            :in-theory (disable des-state-equal-definition-rule
+                                good-des-statep-definition-rule
+                                good-hstatep-definition-rule
+                                c-witness-y-tm=x-tm-definition-rule
+                                c-witness-y-tm<x-tm-definition-rule
+                                c-definition-rule
+                                b-definition-rule
+                                r-definition-rule lwfsk2f-1
+                                case-exhaustive
+                                ACL2::DEFAULT-LESS-THAN-1
+                                ACL2::DEFAULT-LESS-THAN-2
+                                good-des-statep-contract
+                                good-hstatep-contract
+                                spec-transp-definition-rule
+                                rankls-definition-rule
+                                (:rewrite events-at-tm-l-set-equiv)
+                                ;; c-implies-v-good-des-state
+                                lwfsk2f-C-5))))
+ 
+ (local (in-theory (disable des-state-equal-definition-rule
+                            good-des-statep-definition-rule
+                            good-hstatep-definition-rule
+                            c-witness-y-tm=x-tm-definition-rule
+                            c-witness-y-tm<x-tm-definition-rule
+                            c-definition-rule b-definition-rule
+                            r-definition-rule lwfsk2f-1 case-exhaustive
+                            ACL2::DEFAULT-LESS-THAN-1
+                            ACL2::DEFAULT-LESS-THAN-2
+                            good-des-statep-contract good-hstatep-contract
+                            spec-transp-definition-rule
+                            rankls-definition-rule
+                            ;; c-implies-v-good-des-state
+                            lwfsk2f-C lwfsk2f
+                            lwfsk2f-suff)))
+
+ 
+ (defthmd C-is-a-witness
+   (implies (and (C x y)
+                 (not (B x y)))
+            (lwfsk2f x y))
+   :hints (("Goal"
+            :cases ((< (des-state-tm y) (hstate-tm x))
+                    (= (des-state-tm y) (hstate-tm x)))
+            :use ((:instance case-exhaustive)
+                  (:instance lwfsk2f-C)
+                  (:instance lwfsk2f-suff (z (c-witness-y-tm=x-tm x y)))
+                  (:instance lwfsk2f-suff (z (c-witness-y-tm<x-tm y)))))))
+ 
+
+ )
 

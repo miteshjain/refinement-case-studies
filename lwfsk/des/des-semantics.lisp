@@ -1,564 +1,499 @@
-(set-inhibit-warnings "invariant-risk")
-(local (include-book "data-structures/set-theory" :dir :system))
+(in-package "ACL2S")
+(include-book "pete-des")
 
+;; This file includes only events needed to understand DES, our simple
+;; discrete-event simulation system. All of the supporting theorems
+;; can be found in the included book.
 
-;; DES system
+;; Data definitions for DES, a Discrete-Event Simulation system
 
-(defun storep (st)
-  (declare (xargs :guard t))
-  (and (alistp st)
-       (acl2::setp-equal  st)))
+;; Time is an integer
+(defdata time nat)
 
-(register-type store
-               :predicate storep
-               :enumerator nth-true-list)
+;; An event is a string (any type will do)
+(defdata event string)
 
-(defdata event nat)
-(defdata event-list (listof event))
-(defdata pair (cons nat event))
+;; A timed-event is record consisting of a time and an event.
+(defdata timed-event
+  (record (tm . time)
+          (ev . event)))
 
-(defun get-event (ep)
-  (declare (xargs :guard (pairp ep)))
-  (cdr ep))
+;; A list of timed-events
+(defdata lo-te (listof timed-event))
 
-(defun get-event-time (ep)
-  (declare (xargs :guard (pairp ep)))
-  (car ep))
+;; A memory maps a global variable (var) to a value (integer)
+(defdata memory (alistof var integer))
 
-(defdata lofp (alistof nat event))
+;; A state of the DES consists of the current time, the list of
+;; timed-events to execute and the memory.
+(defdata des-state
+  (record (tm . time)
+          (tevs . lo-te)
+          (mem . memory)))
 
-(defun schp (l)
-  (declare (xargs :guard t))
-  (and (lofpp l)
-       (acl2::setp-equal l)))
+;; The definition of des-state equality. The timed events are a set,
+;; so we have to compare them using set equality. The memory is also a
+;; set of variable, value pairs, so we also treat it as a set.
+(defunbc des-state-equal (s w)
+  :input-contract t
+  (or (equal s w)
+      (and (des-statep s)
+           (des-statep w)
+           (equal (des-state-tm s)
+                  (des-state-tm w))
+           (set-equiv (des-state-mem s)
+                            (des-state-mem w))
+           (set-equiv (des-state-tevs s)
+                            (des-state-tevs w)))))
 
-(register-type sch
-               :predicate schp
-               :enumerator nth-true-list)
-           
-(defun valid-timestamps (E ct f)
-  "checks if all events are scheduled to execute at time greater (or
-greater equal if flag f = false ) to ct"
-  (declare (xargs :guard (and (schp E) (natp ct) (booleanp f))))
-  (if (endp E)
-      t
-    (b* ((ep (car E))
-         (et (get-event-time ep)))
-      (and (if f (> et ct) (>= et ct))
-           (valid-timestamps (cdr E) ct f)))))
+(defunbc valid-lo-tes (tevs time)
+  "Checks if the list of timed events is valid: all events in tevs are
+   scheduled to execute at a time >= to time" 
+  :input-contract (and (lo-tep tevs) (timep time))
+  (reduce* and t
+           (map* (lambda (te tm) (>= (timed-event-tm te) tm)) tevs time)))
 
-
-;; execution of an event is modeled as an uninterpreted function. It
-;; takes the current time and the current store as input and returns
-;; an updated store and a list of new events that are scheduled to be
-;; executed at some time > ct. to be added into sch.
+;; The execution of an event is modeled as an uninterpreted function
+;; execute-event. It takes the current time and the current memory as
+;; input and returns an updated memory and a list of new events that
+;; are scheduled to be executed at some time > tm. The new events are
+;; added into Sch.
 
 (encapsulate
- ((execute-event (ev ct st) (mv t t))
-  ; ev-const is a "special" event used to record that no event was
-  ; picked in the predecessor state (refer to impl-step function
-  ; below)"
-  (ev-const () t))
-
- (local (defun ev-const ()
-          0))
+ (((step-events * * *) => *)
+  ((step-memory  * * *) => *))
  
- (local (defun execute-event (ev ct st)
-          (declare (ignore ev ct))
-          (mv nil st)))
+ (local (defun step-events (ev tm mem)
+          (declare (ignore ev tm mem))
+          nil))
 
- (defthm execute-event-contract
-   (mv-let
-    (evl up-st)
-    (execute-event ev ct st)
-    (implies (storep st)
-             (and (schp evl)
-                  (valid-timestamps evl ct t)
-                  (storep up-st)))))
-  
- (defthm ev-const-contract
-   (eventp (ev-const)))
+ (local (defun step-memory (ev tm mem)
+          (declare (ignore ev tm mem))
+          nil))
+
+ (defthm step-events-contract
+   (implies (and (eventp ev)
+                 (timep tm)
+                 (memoryp mem))
+            (and (lo-tep (step-events ev tm mem))
+                 (valid-lo-tes (step-events ev tm mem)
+                               (1+ tm)))))
  
- (defthm ev-const-does-not-change-st-E
-   (mv-let (new-ev up-st)
-           (execute-event (ev-const) ct st)
-           (and (equal new-ev nil)
-                (equal up-st st))))
+ (defthm step-memory-contract
+   (implies (and (eventp ev)
+                 (timep tm)
+                 (memoryp mem))
+            (memoryp (step-memory ev tm mem))))
 
+ (defthm step-events-congruence
+   (implies (and (memoryp mem)
+                 (memoryp mem-equiv)
+                 (eventp ev)
+                 (timep tm)
+                 (set-equiv (double-rewrite mem) (double-rewrite mem-equiv)))
+            (set-equiv (step-events ev tm mem)
+                       (step-events ev tm mem-equiv))))
+
+ (defthm step-memory-congruence
+   (implies (and (memoryp mem)
+                 (memoryp mem-equiv)
+                 (eventp ev)
+                 (timep tm)
+                 (set-equiv (double-rewrite mem) (double-rewrite mem-equiv)))
+            (set-equiv (step-memory ev tm mem)
+                       (step-memory ev tm mem-equiv))))
  )
 
-;; state of DES
+
+(defunbc spec-transp (w v)
+  "transition relation of DES"
+  :input-contract (and (des-statep w) (des-statep v))
+  (let ((w-tm (des-state-tm w))
+        (w-tevs (des-state-tevs w))
+        (w-mem (des-state-mem w)))
+    (if (not (events-at-tm w-tevs w-tm))
+        (des-state-equal v (des-state (1+ w-tm) w-tevs w-mem))
+      (spec-ev-transp w v))))
+
+(defunc events-at-tm (tevs tm)
+  "Returns the sublist of timed-events in tevs that are scheduled 
+   to execute at time = tm"
+  :input-contract (and (lo-tep tevs) (timep tm))
+  :output-contract (lo-tep (events-at-tm Tevs tm))
+  (filter* (lambda (tev tm) (equal (timed-event-tm tev) tm))
+           tevs tm))
+
+(defun-sk spec-ev-transp (w v)
+  (exists tev
+    (let ((tm (des-state-tm w))
+          (tevs (des-state-tevs w))
+          (mem (des-state-mem w)))
+      (and (timed-eventp tev)
+           (equal (timed-event-tm tev) tm)
+           (member-equal tev tevs)
+           (let* ((ev (timed-event-ev tev))
+                  (new-evs (step-events ev tm mem))
+                  (new-mem (step-memory ev tm mem))
+                  (new-tevs (remove-ev tevs tev))
+                  (new-tevs (append new-evs new-tevs)))
+             (des-state-equal v (des-state tm new-tevs new-mem)))))))
+
+(defunc remove-ev (tevs ev)
+  "Removes all occurrences of ev in tevs"
+  :input-contract (and (lo-tep tevs) (timed-eventp ev))
+  :output-contract (lo-tep (remove-ev tevs ev))
+  (filter* (lambda (e1 e2) (not (equal e1 e2))) tevs ev))
 
 
-;; I enforce the the valid-timestamps condition in the good-state
-;; definition.  Is there a natural way to express dependence between
-;; two fields in a record in defdata ?
+;; Optimized Discrete-Event Simulation System
+(defunbc o-lo-tep (l)
+  "An OptDES schedule recognizer"
+  :input-contract t
+  (and (lo-tep l)
+       (ordered-lo-tep l)))
 
-(defdata sstate
-  (record  (ct . nat)
-           (E . sch)
-           (st . store)))
+(defunbc ordered-lo-tep (l)
+  "Check if a list of timed-events, l, is ordered"
+  :input-contract (lo-tep l)
+  (cond ((endp l) t)
+        ((endp (cdr l)) t)
+        (t (and (te-< (car l) (second l))
+                (ordered-lo-tep (cdr l))))))
 
-(defun events-at-ct (E ct)
-    "returns a list of pairs in E scheduled to execute at ct"
-  (declare (xargs :guard (and (schp e) (natp ct))))
-  (if (endp e)
-      nil
-    (if (equal (get-event-time (car e)) ct)
-        (cons (car e)
-              (events-at-ct (cdr e) ct))
-      (events-at-ct (cdr e) ct))))
-
-(defun rmv-event (ep E)
-  "remove ep from E"
-  (declare (xargs :guard (and (pairp ep) (schp E))))
-  (if (endp E)
-      nil
-    (if (equal ep (car E))
-        (cdr E)
-      (cons (car E) (rmv-event ep (cdr E))))))
-
-(defun add-event (ep E)
-  "add ep to E"
-  (declare (xargs :guard (and (pairp ep) (schp E))))
-  (if (endp E)
-      (list ep)
-    (if (equal ep (car E))
-        E
-      (cons (car E) (add-event ep (cdr E))))))
-
-(defun add-events (l E)
-  "add events pair in l to E"
-  (declare (xargs :guard (and (lofpp l)  (schp E))
-                  :verify-guards nil))
-  (if (endp l)
-      E
-    (add-event (car l) (add-events (cdr l) E))))
-
-(defun-sk exists-ev-at-ct (w v)
-  (exists ep
-    (let ((ct (sstate-ct w))
-          (E (sstate-E w))
-          (st (sstate-st w))
-          (ev (get-event ep)))
-      (and (acl2::member-equal ep (events-at-ct E ct))
-           (mv-let (new-evs up-st)
-                   (execute-event ev ct st)
-                   (let* ((up-E (rmv-event (cons ct ev) E))
-                          (up-E (add-events new-evs up-E)))
-                     (equal v (sstate ct up-E up-st))))))))
-    
-(defun spec-relation (w v)
-  (let ((w-ct (sstate-ct w))
-        (w-E (sstate-E w))
-        (w-st (sstate-st w)))
-    (if (not (events-at-ct w-E w-ct))
-        (equal v (sstate (1+ w-ct) w-E w-st))
-      (exists-ev-at-ct w v))))
-
-
-;; OptDES
-
-(defun e-< (p1 p2)
-  (declare (xargs :guard (and (pairp p1) (pairp p2))))
-  (let ((t1 (get-event-time p1))
-        (e1 (get-event p1))
-        (t2 (get-event-time p2))
-        (e2 (get-event p2)))
+(defunbc te-< (te1 te2)
+  "A total ordering on timed-events"
+  :input-contract (and (timed-eventp te1) (timed-eventp te2))
+  (let ((t1 (timed-event-tm te1))
+        (e1 (timed-event-ev te1))
+        (t2 (timed-event-tm te2))
+        (e2 (timed-event-ev te2)))
     (or (< t1 t2)
-        (and (equal t1 t2) (< e1 e2)))))
+        (and (equal t1 t2) (event-< e1 e2)))))
 
-(defthm e-<-transitivity
-  (implies (and (e-< p1 p2)
-                (e-< p2 p3))
-           (e-< p1 p3)))
+(defunbc event-< (e1 e2)
+  "A total ordering on events"
+  :input-contract (and (eventp e1) (eventp e2))
+  (and (string< e1 e2) t))
 
-(defthm e-<-not-reflexive
-  (not (e-< p p)))
+;; State of OptDES consists of the current time, the ordered list of
+;; timed-events to execute and the memory.
+(defdata odes-state
+  (record (tm . time)
+          (otevs . o-lo-te)
+          (mem . memory)))
 
-(defthm e-<-asymmetric
-  (implies (and (pairp p1) (pairp p2)
-                 (e-< p1 p2))
-            (not (e-< p2 p1))))
- 
-(defthm e-<-trichotomy
-  (implies (and (pairp p1) (pairp p2)
-                (not (e-< p1 p2))
-                (not (equal p1 p2)))
-           (e-< p2 p1)))
+(defunc odes-transf (s)
+  "transition function for the implementation"
+  :input-contract (odes-statep s)
+  :output-contract (odes-statep (odes-transf s))
+  (let ((tm (odes-state-tm s))
+        (otevs (odes-state-otevs s))
+        (mem (odes-state-mem s)))
+    (if (endp otevs)
+        (odes-state (1+ tm) otevs mem)
+      (b* ((tev (car otevs))
+           (ev (timed-event-ev tev))
+           (et (timed-event-tm tev))
+           (new-tevs (step-events ev et mem))
+           (new-mem (step-memory ev et mem))
+           (new-otevs (cdr otevs))
+           (new-otevs (insert-otevs new-tevs new-otevs))
+           (new-tm (timed-event-tm tev)))
+        (odes-state new-tm new-otevs new-mem)))))
 
-(defun orderedp (l)
-  "l is an ordered list of pairs"
-  (declare (xargs :guard (lofpp l)))
-  (cond ((atom l)
-         (equal l nil))
-        ((atom (cdr l))
-         (equal (cdr l) nil))
-        (t (let ((p1 (car l))
-                 (p2 (cadr l)))
-             (and (e-< p1 p2)
-                  (orderedp (cdr l)))))))
-
-(in-theory (disable e-<))
-
-;; TODO: note that orderedp implies setp hence the definition of ischp
-;; can be simplified to (and (lofpp x)  (orderedp x))
-(defun ischp (x)
-  (declare (xargs :guard t))
-  (and (schp x)
-       (orderedp x)))
-
-(register-type isch
-               :predicate ischp
-               :enumerator nth-true-list)
-
-(defdata istate
-  (record (ct . nat)
-          (E . isch)
-          (st . store)
-          ;; history
-          (evh . event)
-          (eth . nat)
-          (sth . store)
-          (Eh . isch)))
-
-(defun rmv-event-pq (E)
-  (declare (xargs :guard (ischp E)))
-  (cdr E))
-
-(defun pick-event-pq (E)
-  (declare (xargs :guard (ischp E)))
-  (car E))
-
-(defun insert-event (ep E)
-  "insert event pair ep into E"
-  (declare (xargs :guard (and (pairp ep) (ischp E))))
-  (if (endp E)
-      (list ep)
-    (cond ((equal ep (car E))
-           E)
-          ((e-< ep (car E))
-           (cons ep E))
-          (t (cons (car E) (insert-event ep (cdr E)))))))
-
-(defun insert-events (l E)
-  "insert list l of event-pairs in E"
-  (declare (xargs :guard (and (lofpp l) (ischp E))
-                  :verify-guards nil))
+(defunc insert-otevs (l otevs)
+  "Insert timed-events in l in otevs"
+  :input-contract (and (lo-tep l) (o-lo-tep otevs))
+  :output-contract (o-lo-tep (insert-otevs l otevs))
   (if (endp l)
-      E
-    (insert-event (car l) (insert-events (cdr l) E))))
+      otevs
+    (insert-tev (car l) (insert-otevs (cdr l) otevs))))
 
-(defun impl-step (s)
-  (declare (xargs :guard (istatep s)
-                  :verify-guards nil))
-  (let ((ct (istate-ct s))
-        (E (istate-E s))
-        (st (istate-st s)))
-    (if (endp E)
-        (istate (1+ ct) E st (ev-const) ct st nil)
-      (b* ((ep (pick-event-pq E))
-           ((mv new-ev up-st) (execute-event (get-event ep) ct st))
-           (up-E (rmv-event-pq E))
-           (up-E (insert-events new-ev up-E))
-           (up-ct (get-event-time ep)))
-        (istate up-ct up-E up-st  (get-event ep) (get-event-time ep) st E)))))
-
-(defun ref-map (s)
-  (declare (xargs :guard  (istatep s)))
-  (sstate (istate-ct s) (istate-E s) (istate-st s)))
+(defunc insert-tev (tev otevs)
+  "Insert timed-event tev into otevs"
+  :input-contract (and (timed-eventp tev) (o-lo-tep otevs))
+  :output-contract (o-lo-tep (insert-tev tev otevs))
+  (if (endp otevs)
+      (list tev)
+    (cond ((equal tev (car otevs))
+           otevs)
+          ((te-< tev (car otevs))
+           (cons tev otevs))
+          (t (cons (car otevs) (insert-tev tev (cdr otevs)))))))
 
 
-(defthm ref-map-contract
-  (implies (istatep s)
-           (sstatep (ref-map s)))
-  :hints (("goal" :in-theory (e/d () (sstate istate-ct istate-E istate-st)))))
+;; We show OptDES refines DES as follows:
 
-(defthm ref-map-rewrite
-  (implies (istatep s)
-           (and (equal (sstate-ct (ref-map s)) (istate-ct s))
-                (equal (sstate-E (ref-map s)) (istate-E s))
-                (equal (sstate-st (ref-map s)) (istate-st s)))))
+;; 1. We first define HoptDES, a machine obtained by augmenting a
+;; state of OptDES with a history component.
 
-(in-theory (disable ref-map))
+;; 2. Next we show that OptDES refines HoptDES 
 
-(defun B (s w)
-  (declare (xargs :guard (and (istatep s) (sstatep w))))
-  (and (equal (sstate-ct (ref-map s)) (sstate-ct w))
-       (equal (sstate-st (ref-map s)) (sstate-st w))
-       (acl2::set-equiv (sstate-E (ref-map s)) (sstate-E w))))
+;; 3. Finally we show that HoptDES refines DES.
 
-(defun C (x y)
-  (declare (xargs :guard (and (sstatep y) (istatep x))))
-  (and (valid-timestamps (sstate-E y) (istate-ct x) nil)
-       (or (and (<= (sstate-ct y) (istate-ct x))
-                (equal (sstate-st y) (istate-sth x))
-                (acl2::set-equiv (sstate-E y) (istate-Eh x)))
-           (B x y))))
-
-(defun rankls (y x)
-  (declare (xargs :guard (and (sstatep y) (istatep x))))
-  (nfix (- (+ (istate-ct x) (len (events-at-ct (sstate-E y) (istate-ct x))))
-           (sstate-ct y))))
-
-(defun igood-statep (s)
-  (declare (xargs :guard t
-                  :verify-guards nil))
-  (and (istatep s)
-       (valid-timestamps (istate-E s) (istate-ct s) nil)
-       ;; the last event picked for execution must be scheduled to
-       ;; execute at the current time (istate-ct s)
-       (equal (istate-eth s) (istate-ct s))
-       ;; Eh is a good schedular, i.e. the timestamps are valid and
-       ;;  (eth evh) must be the first element in Eh
-       (valid-timestamps (istate-Eh s) (istate-eth s) nil)
-       (equal (car (istate-Eh s)) (cons (istate-eth s) (istate-evh s)))
-       ;; TODO: member condition below is implied by the above
-       ;; condition. Prove an appropriate lemma and remove it.
-       (acl2::member-equal (cons (istate-eth s) (istate-evh s)) (istate-Eh s))
-       ;; the store and E of s are results of executing the event evh
-       ;; on the store sth
-       (mv-let (new-evs up-st)
-               (execute-event (istate-evh s) (istate-ct s) (istate-sth s))
-               (and (equal (istate-st s) up-st)
-                    ;; following is "equal" because a set has a unique
-                    ;; representation as a ordered list.
-                    (equal (istate-E s) (insert-events
-                                         new-evs
-                                         (rmv-event-pq (istate-Eh s))))))))
-(defun sgood-statep (s)
-  (declare (xargs :guard t
-                  :verify-guards nil))
-  (and (sstatep s)
-       (valid-timestamps (sstate-E s) (sstate-ct s) nil)))
+;; We then appeal to the transitivity property of skipping refinement to
+;; infer that OptDES refines DES. 
 
 
-;; proof of LWFSK
+;; Step 1: Define HoptDES
 
-;; The required lemmas are proven in des-thms.lisp. The following
-;; definitions/theorems are indication of the proof structure. Several
-;; hints are ignored for clarity. So we do no expect to admit the form
-;; below. 
+;; A state of the HoptDES consists of the current time, the ordered
+;; list of timed-events to execute, the memory, and the history
+;; component.
+
+(defdata hstate
+  (record (tm . time)
+          (otevs . o-lo-te)
+          (mem . memory)
+          (h . history)))
+
+;; where the history component consists of the valid bit, the current
+;; time, the ordered list of timed-events to execute, and the memory.
+(defdata history
+  (record (valid . boolean)
+          (tm . time)
+          (otevs . o-lo-te)
+          (mem . memory)))
+
+;; The transition function of HoptDES is obtained by modifying
+;; odes-transf, the transition function of OptDES such that the
+;; history component of the state records the past information.
+(defunc hodes-transf (s)
+  "transition function for HoptDES"
+  :input-contract (hstatep s)
+  :output-contract (hstatep (hodes-transf s))
+  (let* ((tm (hstate-tm s))
+         (otevs (hstate-otevs s))
+         (mem (hstate-mem s))
+         (hist (history t tm otevs mem)))
+    (if (endp otevs)
+        (hstate (1+ tm) otevs mem hist)
+      (let* ((tev (car otevs))
+             (ev (timed-event-ev tev))
+             (et (timed-event-tm tev))
+             (new-tevs (step-events ev et mem))
+             (new-mem (step-memory ev et mem))
+             (new-otevs (cdr otevs))
+             (new-otevs (insert-otevs new-tevs new-otevs))
+             (new-tm (timed-event-tm tev)))
+        (hstate new-tm new-otevs new-mem hist)))))
+
+;; OptDES refines HoptDES under a refinement map P
+(defunc P (s)
+  :input-contract (odes-statep s)
+  :output-contract (hstatep (P s))
+  (let ((tm (odes-state-tm s))
+        (otevs (odes-state-otevs s))
+        (mem (odes-state-mem s)))
+    (hstate tm otevs mem (history nil 0 nil nil))))
+
+(defunbc A (s w)
+  "A binary relation between OptDES and HoptDES"
+  :input-contract t
+  (and (good-odes-statep s)
+       (good-hstatep w)
+       (let* ((ps (P s))
+              (ps-tm (hstate-tm ps))
+              (ps-otevs (hstate-otevs ps))
+              (ps-mem (hstate-mem ps))
+              (w-tm (hstate-tm w))
+              (w-otevs (hstate-otevs w))
+              (w-mem (hstate-mem w)))
+         (and (equal ps-tm w-tm)
+              (equal ps-otevs w-otevs)
+              (set-equiv ps-mem w-mem)))))
+
+;; A state of OptDES is good if it has a valid list of timed-events.
+(defunbc good-odes-statep (s)
+  "good odes state recognizer"
+  :input-contract t
+  (and (odes-statep s)
+       (valid-lo-tes (odes-state-otevs s) (odes-state-tm s))))
+
+;; A state of HoptDES is good if it has a valid list of timed-events
+;; and the history is good.
+(defunbc good-hstatep (s)
+  :input-contract t
+  (and (hstatep s)
+       (valid-lo-tes (hstate-otevs s) (hstate-tm s))
+       (good-histp s)))
+
+;; History is good if it records a time, an ordered list of
+;; timed-events, and a memory which when "steped" results in the
+;; current state.
+
+(defunbc good-histp (s)
+  "Checks if the history component of an Hstate is good"
+  :input-contract (hstatep s)
+  (let* ((hist (hstate-h s))
+         (h-tm (history-tm hist))
+         (h-valid (history-valid hist))
+         (h-otevs (history-otevs hist))
+         (h-mem (history-mem hist))
+         (hst (hstate h-tm h-otevs h-mem
+                      (history nil 0 nil nil)))
+         (sh (hodes-transf hst)))
+    (implies h-valid
+             (and (hstate-equal sh s)
+                  (valid-lo-tevs h-otevs (hstate-tm s))))))
+
+;; hstate-equal: compares the current time, the ordered list of
+;; timed-events and the memory in two states. In addition, it compares
+;; that the history of two states is either both valid or both
+;; invalid. In case the history is valid then it also compare the
+;; history components.
+
+(defunbc hstate-equal (s w)
+  :input-contract t
+  (or (equal s w)
+      (and (hstatep s)
+           (hstatep w)
+           (equal (hstate-tm s)
+                  (hstate-tm w))
+           (equal (hstate-otevs s)
+                  (hstate-otevs w))
+           (set-equiv (hstate-mem s)
+                            (hstate-mem w))
+           (if (history-valid (hstate-h s))
+               (and (history-valid (hstate-h w))
+                    (equal (history-tm (hstate-h s))
+                           (history-tm (hstate-h w)))
+                    (equal (history-otevs (hstate-h s))
+                           (history-otevs (hstate-h w)))
+                    (set-equiv (history-mem (hstate-h s))
+                                     (history-mem (hstate-h w))))
+             (not (history-valid (hstate-h w)))))))
 
 
-;; Let s be an istate, s--> u the two proof obligations are there
-;;  exists a v such that uBv (LWFSK2a holds) or there exists a v such
-;;  that uCv (LWFSK2d holds)
+;; Step 2: To show that OptDES refines HoptDES under the refinement
+;; map P we first show that the refinement map P agrees with A.
 
-;; We consider two cases 1. there is an event in s.E to be executed at
-;; current time s.ct 2. There are no events in s.E to be executed at
-;; current time s.ct. In the first case we construct a witness v such
-;; that uBv holds. In the second case we construct a witness such that
-;; uCv holds. In both cases we show that the witness is a successor of
-;; (ref-map s).
+(defthm P-good
+  (implies (good-odes-statep s)
+           (A s (P s))))
 
-(defun B-witness-v-event-at-ct (ev w)
-  (declare (xargs :guard (and (eventp ev) (sstatep w))
-                  :verify-guards nil))
- " ev is an event that is choosen in w to be executed at the current
-   time"
-  (b* (((mv new-evs up-st) (execute-event ev (sstate-ct w) (sstate-st w)))
-       (up-E (rmv-event (cons (sstate-ct w) ev) (sstate-E w)))
-       (up-E (add-events new-evs up-E))
-       (v (sstate (sstate-ct w) up-E up-st)))
-    v))
+;; Next we show that A is a LWFSK on the disjoint union of HoptDES and
+;; OptDES. Since both machines neither stutter or skip with respect to
+;; each other, we ignore defining rankt and C. Also since both
+;; machines are deterministic we have simplified the theorem by
+;; dropping the existential quantifier in LWFSK2a . We can show that
+;; there is a bisimulation relation between OptDES and
+;; HoptDES. However, showing that A is a LWFSK suffices for our
+;; purpose.
 
-(defun B-witness-v-noevent-at-ct (w)
-  (declare (xargs :guard (sstatep w)))
-  (sstate (1+ (sstate-ct w)) (sstate-E w) (sstate-st w)))
+(defthm A-is-a-LWFSK
+  (implies (and (good-odes-statep s)
+                (good-hstatep w)
+                (A s w))
+           (A (odes-transf s)
+              (hodes-transf w))))
 
-;; TODO consider the following alternative definition as it
-;; illustrates the dependence of the witness on s"
-
-;; (defun B-witness-v-event-at-ct (s)
-;; ;  (declare (xargs :guard (and (eventp ev) (sstatep w))))
-;;  " ev is an event that is choosen in w to be executed at the current
-;;    time"
-;;  (b* ((u (impl-step s))
-;;       (w (ref-map s))
-;;       (ev (istate-evh u))
-;;       ((mv new-evs up-st) (execute-event ev (sstate-ct w) (sstate-st w)))
-;;       (up-E (rmv-event (cons (sstate-ct w) ev) (sstate-E w)))
-;;       (up-E (add-events new-evs up-E))
-;;       (v (sstate (sstate-ct w) up-E up-st)))
-;;    v))
-
-;; (defun B-witness-v-noevent-at-ct (s)
-;;   (declare (xargs :guard (istatep s)))
-;;   (let ((w (ref-map s)))
-;;     (sstate (1+ (sstate-ct w)) (sstate-E w) (sstate-st w))))
+ (defthm good-odes-inductive
+   (implies (good-odes-statep s)
+            (good-odes-statep (odes-transf s))))
 
 
-(encapsulate
- ()
+(defthm good-hstate-inductive
+  (implies (good-hstatep s)
+           (good-hstatep (hodes-transf s))))
 
- 
- (local (defthm l1
-   (implies (and (consp l)
-                 (ischp l))
-            (and (pairp (car l))
-                 (ischp (cdr l))))
-   :hints (("goal" :in-theory (enable ischp)))))
- 
- (defthmd impl-step-contract
-   (implies (istatep s)
-            (istatep (impl-step s)))
-   :hints (("goal" :in-theory (enable get-event))))
+;; Step 3: Next we show that HoptDES refines DES under the refinement
+;; map R
+(defunc R (s)
+  "A refinement map from an OptDES state to a DES state"
+  :input-contract (hstatep s)
+  :output-contract (des-statep (R s))
+  (des-state (hstate-tm s) (hstate-otevs s) (hstate-mem s)))
 
- 
- (local (defthmd B-events-at-ct
-          (let* ((u (impl-step s))
-                 (ev (get-event (pick-event-pq (istate-E s))))
-                 (w (ref-map s))
-                 (v (B-witness-v-event-at-ct ev w)))
-            (implies (and (istatep s)
-                          (igood-statep s)
-                          (events-at-ct (istate-E s) (istate-ct s)))
-                     (and (spec-relation w v)
-                          (B u v))))
-          :hints (("goal" :in-theory (union-theories '() (theory 'minimal-theory))
-                   :use ((:instance B-constraints-events-at-ct)
-                         (:instance impl-step-contract))))))
+;; We provide as witness a binary relation B and show that it is an
+;; SKS relation.
+(defunbc B (s w)
+  "SKS relation between an OptDES state and a DES state"
+  :input-contract t
+  (and (good-hstatep s)
+       (good-des-statep w)
+       (des-state-equal (R s) w)))
 
- (local (defthmd B-constraints-noevents-at-ct
-          (let* ((u (impl-step s))
-                 (w (ref-map s))
-                 (v (B-witness-v-noevent-at-ct w)))
-            (implies (and (istatep s)
-                          (igood-statep s)
-                          (not (events-at-ct (istate-E s) (istate-ct s))))
-                     (and (spec-relation w v)
-                          (C u v))))))
+;; First we show that the refinement map R agrees with B.
+(defthm R-good
+  (implies (good-hstatep s)
+           (B s (R s))))
 
- (defun-sk B-witness-exists-1 (s)
+;; Next we show that B is an LWFSK on the disjoing union of HoptDES
+;; and DES. Since both machines do not stutter, we ignore rankt. We
+;; define as witness a binary relation C and rankls that satisfy
+;; LWFSK2.
+
+;; Informally, xCy holds if y can reach a state that is related to x
+;; by B. This is true if x and y are related by B or else the list of
+;; timed-events and the memory in y are (set) equal to the list of
+;; timed-events and the memory in a predecessor of x and the current
+;; time of y is less or equal to the current time of x.
+
+(defunbc C (x y)
+  :input-contract t
+  (and (good-hstatep x)
+       (good-des-statep y)
+       (or (B x y)
+           (and (history-valid (hstate-h x))
+                (consp (history-otevs (hstate-h x)))
+                (<= (des-state-tm y) (hstate-tm x))
+                (set-equiv (des-state-tevs y)
+                                 (history-otevs (hstate-h x)))
+                (set-equiv (des-state-mem y)
+                           (history-mem (hstate-h x)))))))
+
+(defunc rankls (y x)
+  "rank function"
+  :input-contract (and (des-statep y) (hstatep x))
+  :output-contract (natp (rankls y x))
+  (nfix (- (+ (hstate-tm x)
+              (len (events-at-tm (des-state-tevs y) (hstate-tm x))))
+           (des-state-tm y))))
+
+;; Next we show that B is an LWFSK.
+(defthm B-is-a-LWFSK
+  (implies (and (good-hstatep s)
+                (good-des-statep w)
+                (B s w))
+           (or (lwfsk2a (hodes-transf s) w)
+               (lwfsk2d (hodes-transf s) w)))
+  :rule-classes nil)
+
+(defun-sk lwfsk2a (u w)
   (exists v
-    (and (spec-relation (ref-map s) v)
-         (B (impl-step s) v))))
- 
- (defun-sk B-witness-exists-2 (s)
-   (exists v
-     (and (spec-relation (ref-map s) v)
-          (C (impl-step s) v))))
- 
- (defthm B-constraints
-   (implies (and (istatep s)
-                 (igood-statep s))
-            (or (B-witness-exists-1 s)
-                (B-witness-exists-2 s)))
-   :hints (("goal" :cases ((events-at-ct (istate-E s) (istate-ct s)))
-            :use ((:instance B-witness-exists-1-suff (v (B-witness-v-event-at-ct
-                                                         (get-event (pick-event-pq (istate-E s)))
-                                                         (ref-map s))))
-                  (:instance B-constraints-events-at-ct)
-                  (:instance b-constraints-noevents-at-ct)
-                  (:instance B-witness-exists-2-suff (v (B-witness-v-noevent-at-ct (ref-map s)))))
-            :in-theory  (disable igood-statep istatep
-                                 spec-relation B C ischp storep eventp
-                                 b-witness-exists-1
-                                 b-witness-exists-2
-                                 B-witness-v-noevent-at-ct
-                                 B-witness-v-event-at-ct
-                                 ref-map pick-event-pq impl-step)))
-   :rule-classes nil)
- )
-            
+    (and (good-des-statep v)
+         (good-hstatep u)
+         (good-des-statep w)
+         (B u v)
+         (spec-transp w v))))
 
-;;  Next we show that C and rankls satisfy conditions in the second
-;;  universal quantifier in LWFSK, i.e if xCy then either xBy or there
-;;  exist a z such that xCz and rankls(z,x) < rankls(y, x)
+(defun-sk lwfsk2d (u w)
+  (exists v
+    (and (good-des-statep v)
+         (good-hstatep u)
+         (good-des-statep w)
+         (C u v)
+         (spec-transp w v))))
 
-;; Let xCy and ~(xBy). We consider two cases: 1. y.ct = x.ct 2. y.ct
-;; <= y.ct. In each case we define a witness z and show that xCz holds
-;; and the rank decreases. In each case we also show that z is a
-;; successor of y, i.e (spec-relation y z).
+(defthmd C-is-a-witness
+  (implies (and (good-hstatep x)
+                (good-des-statep y)
+                (C x y)
+                (not (B x y)))
+           (lwfsk2f x y)))
 
+(defun-sk lwfsk2f (x y)
+  (exists z
+    (and (good-hstatep x)
+         (good-des-statep y)
+         (good-des-statep z)
+         (spec-transp y z)
+         (C x z)
+         (< (rankls z x) (rankls y x)))))
 
-(encapsulate
- ()
- (defun witness-x-ct=y-ct (x y)
-          ;; (declare (xargs :guard (and (istatep x) (sstatep y))
-          ;;                 :verify-guards nil))
-   (b* ((ct (sstate-ct y))
-        (E (sstate-E y))
-        (st (sstate-st y))
-        (eth (istate-eth x))
-        (evh (istate-evh x))
-        (eph (cons eth evh))
-        ((mv new-evs up-st) (execute-event evh ct st))
-        (up-E (rmv-event eph E))
-        (up-E (add-events new-evs up-E))
-        (z (sstate ct up-E up-st)))
-     z))
-
- 
- (local (defthmd c-spec-relation-2b
-          (implies (and (istatep x)
-                        (igood-statep x)
-                        (sstatep y)
-                        (C x y)
-                        (not (B x y))                
-                        (equal (istate-ct x) (sstate-ct y)))
-                   (spec-relation y (witness-x-ct=y-ct x y)))))
-
- (defun witness-y-ct<-x-ct (y)
-   (declare (xargs :guard (sstatep y)))
-   (let* ((z-ct (sstate-ct y))
-          (z-E (sstate-E y))
-          (z-st (sstate-st y))
-          (z (sstate (1+ z-ct) z-E z-st)))
-     z))
-
- (local (defthmd spec-relation-no-event-at-ct
-          (implies (and (istatep x)
-                        (igood-statep x)
-                        (sstatep y)
-                        (sgood-statep y)
-                        (not (events-at-ct (sstate-E y) (sstate-ct y)))
-                        (C x y))
-                   (spec-relation y (witness-y-ct<-x-ct y)))))
-
- (local (defthmd c-lemma-1
-          (let ((z (if (< (sstate-ct y) (istate-ct x))
-                       (witness-y-ct<-x-ct  y)
-                     (witness-x-ct=y-ct x y))))
-            (implies (and (istatep x)
-                          (igood-statep x)
-                          (sstatep y)
-                          (sgood-statep y) 
-                          (C x y)
-                          (not (B x y)))
-                     (C x z)))
-          :hints (("goal" :in-theory (union-theories '() (theory 'minimal-theory))
-                   :use ((:instance c-constraints-1))))))
-
- (local (defthmd c-lemma-2
-          (let ((z (if (< (sstate-ct y) (istate-ct x))
-                       (witness-y-ct<-x-ct  y)
-                     (witness-x-ct=y-ct x y))))
-            (implies (and (istatep x)
-                          (igood-statep x)
-                          (sstatep y)
-                          (sgood-statep y) 
-                          (C x y)
-                          (not (B x y)))
-                     (< (rankls z x) (rankls y x))))
-          :hints (("goal" :in-theory (union-theories '() (theory 'minimal-theory))
-                   :use ((:instance c-constraints-2))))))
-
-
- (defthmd c-constraints
-   (let ((z (if (< (sstate-ct y) (istate-ct x))
-                (witness-y-ct<-x-ct  y)
-              (witness-x-ct=y-ct x y))))
-     (implies (and (istatep x)
-                   (igood-statep x)
-                   (sstatep y)
-                   (sgood-statep y) 
-                   (C x y)
-                   (not (B x y)))
-              (and (C x z)
-                   (< (rankls z x) (rankls y x)))))
-   :hints (("goal" :in-theory (union-theories '() (theory 'minimal-theory))
-            :use ((:instance c-lemma-1)
-                  (:instance c-lemma-2)))))
- )
+(defthm good-des-statep-inductive
+  (implies (and (good-des-statep w)
+                (des-statep v)
+                (spec-transp w v))
+           (good-des-statep v)))
