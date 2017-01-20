@@ -53,7 +53,7 @@
 (defequiv des-state-equal)
 
 (defcong des-state-equal equal (des-state-tm x) 1)
-(defcong des-state-equal equal (des-state-tevs x) 1)
+(defcong des-state-equal set-equiv (des-state-tevs x) 1)
 (defcong des-state-equal set-equiv (des-state-mem x) 1)
 
 (defdata lob (listof boolean))
@@ -117,15 +117,6 @@
                  (timep tm)
                  (memoryp mem))
             (memoryp (step-memory ev tm mem))))
-
-
- ;; Mitesh: I probably need constraints that given mem and mem-equiv
- ;; w.r.t set-equiv step-events and step-contract return set-equiv
- ;; results. This might be required because Spec and the
- ;; implementation can execute the event on a mem and mem-equiv
- ;; (set-equiv and not equal). As a result we cannot infer that
- ;; step-events and step-memory on both systems will return same
- ;; result.
 
  ;; needs a loop-stopper bad rewrite
  (defthmd step-events-congruence
@@ -728,17 +719,27 @@
 
 (encapsulate
  nil
+ (local (include-book "oset-set-equiv-equal" :ttags :all))
 
- ;; need this lemma since we insist that generated events are just a
- ;; set and inserting them results in "equal" otevs
- (skip-proofs
-  (local (defthm insert-otevs-l-equiv-is-equal
-           (implies (and (o-lo-tep otevs)
-                         (lo-tep l)
-                         (lo-tep l-equiv)
-                         (set-equiv l l-equiv))
-                    (equal (insert-otevs l otevs)
-                           (insert-otevs l-equiv otevs))))))
+ (local (defthmd insert-otevs-l-equiv-is-set-eqiuv
+          (implies (and (o-lo-tep otevs)
+                        (lo-tep l)
+                        (lo-tep l-equiv)
+                        (set-equiv l l-equiv))
+                   (set-equiv (insert-otevs l otevs)
+                              (insert-otevs l-equiv otevs)))))
+
+ (local (defthm insert-otevs-l-equiv-is-equal
+          (implies (and (o-lo-tep otevs)
+                        (lo-tep l)
+                        (lo-tep l-equiv)
+                        (set-equiv l l-equiv))
+                   (equal (insert-otevs l otevs)
+                          (insert-otevs l-equiv otevs)))
+          :hints (("Goal"
+                   :use ((:instance insert-otevs-l-equiv-is-set-eqiuv)
+                         (:instance o-lo-tep-set-equiv-is-equal (x (insert-otevs l otevs))
+                                    (y (insert-otevs l-equiv otevs))))))))
 
  ;; Not sure if it is useful here and/or there might be a better place for
  ;; this congruence relation
@@ -833,6 +834,7 @@
                                     (l-equiv (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                           (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                           (HSTATE-MEM W)))))))))
+
  (local (defthm A-implies-good-states
           (implies (A s w)
                    (and (good-odes-statep s)
@@ -977,7 +979,6 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                     (cdr x))))
   )
 
-
  (encapsulate
   nil
   (local (defthm remove-ev-member-1
@@ -1001,7 +1002,6 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
            :hints (("goal" :in-theory (e/d (set-equiv)))))
 
   )
-           
 
 (encapsulate
   nil
@@ -1383,9 +1383,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
   :rule-classes (:forward-chaining))
 
 (defthm B-is-a-LWFSK
-  (implies (and ;; (good-hstatep s)
-                ;; (good-des-statep w)
-                (B s w))
+  (implies (B s w)
            (or (lwfsk2a (hodes-transf s) w)
                (lwfsk2d (hodes-transf s) w)))
   :hints (("Goal" :cases ((not (equal (hstate-tm s)
@@ -1473,6 +1471,34 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
  
  )
 
+(defthm history-tevs-car
+  (implies (and (good-hstatep x)
+                (history-valid (hstate-h x))
+                (consp (history-otevs (hstate-h x))))
+           (equal (timed-event-tm (car (history-otevs (hstate-h x))))
+                  (hstate-tm x)))
+  :instructions (:bash
+                 (:dv 2)
+                 (:equiv
+                  x
+                  (hstate
+                   (timed-event-tm (car (history-otevs (hstate-h x))))
+                   (insert-otevs
+                    (step-events (timed-event-ev (car (history-otevs (hstate-h x))))
+                                 (timed-event-tm (car (history-otevs (hstate-h x))))
+                                 (history-mem (hstate-h x)))
+                    (cdr (history-otevs (hstate-h x))))
+                   (step-memory (timed-event-ev (car (history-otevs (hstate-h x))))
+                                (timed-event-tm (car (history-otevs (hstate-h x))))
+                                (history-mem (hstate-h x)))
+                   (history t (history-tm (hstate-h x))
+                            (history-otevs (hstate-h x))
+                            (history-mem (hstate-h x)))))
+                 (:rewrite hstate-constructor-destructors-proper)
+                 :up :bash
+                 :bash :bash
+                 :bash :bash))
+
 ;; Proof for (C x (C-witness-y-tm=x-tm x y)) follows
 (encapsulate
  nil
@@ -1499,18 +1525,6 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
  (in-theory (enable good-histp-definition-rule))
  (in-theory (disable valid-lo-tevs->=-tm 
                      valid-lo-tevs-definition-rule))
-
- 
- ;; BOZO the proof is simple I am not able to contol the rewriter 
- (skip-proofs
-  (local (defthm history-tevs-car
-           (implies (and (good-hstatep x)
-                         (history-valid (hstate-h x))
-                         (consp (history-otevs (hstate-h x))))
-                    (equal (timed-event-tm (car (history-otevs (hstate-h x))))
-                           (hstate-tm x)))
-           :hints (("Goal" :do-not '(eliminate-destructors generalize)))))
-  )
 
  (local (defthmd lwfsk2f-spec-ev-transp
           (implies (and (good-hstatep x)
@@ -1560,6 +1574,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
 
 (encapsulate
  nil
+
  (local (defthm events-at-tm-distributes-over-append
           (implies (and (lo-tep l1) (lo-tep l2) (timep tm))
                    (equal (events-at-tm (append l1 l2) tm)
@@ -1631,19 +1646,6 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
  (local (in-theory (disable l1 l3 events-at-tm-remove-ev
                             no-new-evs-at-tm
                             events-at-tm-distributes-over-append)))
-
-
- ;; Also in another encapsulate consider making it non-local
- ;; BOZO the proof is simple I am not able to contol the rewriter 
- (skip-proofs
-  (local (defthm history-tevs-car
-           (implies (and (good-hstatep x)
-                         (history-valid (hstate-h x))
-                         (consp (history-otevs (hstate-h x))))
-                    (equal (timed-event-tm (car (history-otevs (hstate-h x))))
-                           (hstate-tm x)))
-           :hints (("Goal" :do-not '(eliminate-destructors generalize)))))
-  )
 
 
  (local (defthm l3c (implies (and (good-hstatep x)
@@ -1763,6 +1765,9 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
 
  (in-theory (disable  acl2::commutativity-of-append-under-set-equiv))
 
+ (local (in-theory (disable hstate-equal-definition-rule
+                     (:congruence acl2::set-equiv-implies-equal-consp-1))))
+
  (local (defthm c3
           (implies (and (good-hstatep x)
                         (good-des-statep y)
@@ -1771,26 +1776,347 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                         (equal (des-state-tm y) (hstate-tm x)))
                    (equal (des-state-tm (R x)) (des-state-tm (c-witness-y-tm=x-tm x y))))))
 
- (skip-proofs
-  (defthm c2
-    (implies (and (good-hstatep x)
-                  (good-des-statep y)
-                  (c x y)
-                  (not (b x y))
-                  (equal (des-state-tm y) (hstate-tm x)))
-             (set-equiv (des-state-tevs (r x))
-                        (des-state-tevs (c-witness-y-tm=x-tm x y))))))
+ (local (defthm foo-1
+          (IMPLIES
+           (AND
+            (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                   (DES-STATE-TM Y))
+            (HSTATEP X)
+            (VALID-LO-TEVS (HSTATE-OTEVS X)
+                           (DES-STATE-TM Y))
+            (HISTORY-OTEVS (HSTATE-H X))
+            (HSTATE-EQUAL
+             (HSTATE
+              (DES-STATE-TM Y)
+              (INSERT-OTEVS
+               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                            (DES-STATE-TM Y)
+                            (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X))))
+              (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                           (DES-STATE-TM Y)
+                           (HISTORY-MEM (HSTATE-H X)))
+              (HISTORY T (HISTORY-TM (HSTATE-H X))
+                       (HISTORY-OTEVS (HSTATE-H X))
+                       (HISTORY-MEM (HSTATE-H X))))
+             X)
+            (DES-STATEP Y)
+            (VALID-LO-TEVS (DES-STATE-TEVS Y)
+                           (DES-STATE-TM Y))
+            (HISTORY-VALID (HSTATE-H X))
+            (SET-EQUIV (DES-STATE-TEVS Y)
+                       (HISTORY-OTEVS (HSTATE-H X)))
+            (SET-EQUIV (DES-STATE-MEM Y)
+                       (HISTORY-MEM (HSTATE-H X)))
+            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+                                   (HSTATE-OTEVS X)
+                                   (HSTATE-MEM X))
+                        Y))
+            (NOT (SET-EQUIV (DES-STATE-MEM Y)
+                            (HSTATE-MEM X)))
+            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X))
+            (SET-EQUIV (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (DES-STATE-MEM Y))
+                       (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (HISTORY-MEM (HSTATE-H X)))))
+           (SET-EQUIV
+            (HSTATE-OTEVS X)
+            (APPEND (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                 (DES-STATE-TM Y)
+                                 (HISTORY-MEM (HSTATE-H X)))
+                    (CDR (HISTORY-OTEVS (HSTATE-H X))))))
+          :INSTRUCTIONS
+          (:PROMOTE
+           :EXPAND (:DV 1)
+           (:EQUIV
+            X
+            (HSTATE
+             (DES-STATE-TM Y)
+             (INSERT-OTEVS
+              (STEP-EVENTS
+               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+               (DES-STATE-TM Y)
+               (HISTORY-MEM (HSTATE-H X)))
+              (CDR (HISTORY-OTEVS (HSTATE-H X))))
+             (STEP-MEMORY
+              (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+              (DES-STATE-TM Y)
+              (HISTORY-MEM (HSTATE-H X)))
+             (HISTORY T (HISTORY-TM (HSTATE-H X))
+                      (HISTORY-OTEVS (HSTATE-H X))
+                      (HISTORY-MEM (HSTATE-H X))))
+            HSTATE-EQUAL)
+           (:REWRITE HSTATE-CONSTRUCTOR-DESTRUCTORS-PROPER)
+           (:REWRITE APPEND-SETEQUIV-INSERT-TEVS)
+           :UP
+           :BASH :BASH
+           :BASH :BASH
+           :BASH :BASH)))
+
+ (local (defthm foo-2
+          (IMPLIES
+           (AND
+            (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                   (DES-STATE-TM Y))
+            (HSTATEP X)
+            (VALID-LO-TEVS (HSTATE-OTEVS X)
+                           (DES-STATE-TM Y))
+            (HISTORY-OTEVS (HSTATE-H X))
+            (HSTATE-EQUAL
+             (HSTATE
+              (DES-STATE-TM Y)
+              (INSERT-OTEVS
+               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                            (DES-STATE-TM Y)
+                            (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X))))
+              (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                           (DES-STATE-TM Y)
+                           (HISTORY-MEM (HSTATE-H X)))
+              (HISTORY T (HISTORY-TM (HSTATE-H X))
+                       (HISTORY-OTEVS (HSTATE-H X))
+                       (HISTORY-MEM (HSTATE-H X))))
+             X)
+            (DES-STATEP Y)
+            (VALID-LO-TEVS (DES-STATE-TEVS Y)
+                           (DES-STATE-TM Y))
+            (HISTORY-VALID (HSTATE-H X))
+            (SET-EQUIV (DES-STATE-TEVS Y)
+                       (HISTORY-OTEVS (HSTATE-H X)))
+            (SET-EQUIV (DES-STATE-MEM Y)
+                       (HISTORY-MEM (HSTATE-H X)))
+            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+                                   (HSTATE-OTEVS X)
+                                   (HSTATE-MEM X))
+                        Y))
+            (NOT (SET-EQUIV (DES-STATE-TEVS Y)
+                            (HSTATE-OTEVS X)))
+            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X))
+            (SET-EQUIV (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (DES-STATE-MEM Y))
+                       (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (HISTORY-MEM (HSTATE-H X)))))
+           (SET-EQUIV
+            (HSTATE-OTEVS X)
+            (APPEND (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                 (DES-STATE-TM Y)
+                                 (DES-STATE-MEM Y))
+                    (CDR (HISTORY-OTEVS (HSTATE-H X))))))
+          :INSTRUCTIONS
+          (:PROMOTE
+           :EXPAND (:DV 1)
+           (:EQUIV
+            X
+            (HSTATE
+             (DES-STATE-TM Y)
+             (INSERT-OTEVS
+              (STEP-EVENTS
+               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+               (DES-STATE-TM Y)
+               (HISTORY-MEM (HSTATE-H X)))
+              (CDR (HISTORY-OTEVS (HSTATE-H X))))
+             (STEP-MEMORY
+              (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+              (DES-STATE-TM Y)
+              (HISTORY-MEM (HSTATE-H X)))
+             (HISTORY T (HISTORY-TM (HSTATE-H X))
+                      (HISTORY-OTEVS (HSTATE-H X))
+                      (HISTORY-MEM (HSTATE-H X))))
+            HSTATE-EQUAL)
+           (:REWRITE HSTATE-CONSTRUCTOR-DESTRUCTORS-PROPER)
+           (:REWRITE APPEND-SETEQUIV-INSERT-TEVS)
+           :UP
+           :BASH :BASH
+           :BASH :BASH
+           :BASH :BASH)))
+
+ (local (defthm c2
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (c x y)
+                        (not (b x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (set-equiv (des-state-tevs (R x))
+                              (des-state-tevs (c-witness-y-tm=x-tm x y))))
+          :hints (("goal" :in-theory (disable history-tevs-car)
+                   :use ((:instance history-tevs-car)
+                         (:instance step-events-congruence
+                                    (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
+                                    (tm (des-state-tm y))
+                                    (mem (des-state-mem y))
+                                    (mem-equiv (history-mem (hstate-h x)))))
+                   :do-not '(eliminate-destructors)))))
+
+ (local (defthm foo-3
+          (IMPLIES
+           (AND
+            (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                   (DES-STATE-TM Y))
+            (SET-EQUIV (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (DES-STATE-MEM Y))
+                       (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (HISTORY-MEM (HSTATE-H X))))
+            (HSTATEP X)
+            (VALID-LO-TEVS (HSTATE-OTEVS X)
+                           (DES-STATE-TM Y))
+            (HISTORY-OTEVS (HSTATE-H X))
+            (HSTATE-EQUAL
+             (HSTATE
+              (DES-STATE-TM Y)
+              (INSERT-OTEVS
+               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                            (DES-STATE-TM Y)
+                            (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X))))
+              (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                           (DES-STATE-TM Y)
+                           (HISTORY-MEM (HSTATE-H X)))
+              (HISTORY T (HISTORY-TM (HSTATE-H X))
+                       (HISTORY-OTEVS (HSTATE-H X))
+                       (HISTORY-MEM (HSTATE-H X))))
+             X)
+            (DES-STATEP Y)
+            (VALID-LO-TEVS (DES-STATE-TEVS Y)
+                           (DES-STATE-TM Y))
+            (HISTORY-VALID (HSTATE-H X))
+            (SET-EQUIV (DES-STATE-TEVS Y)
+                       (HISTORY-OTEVS (HSTATE-H X)))
+            (SET-EQUIV (DES-STATE-MEM Y)
+                       (HISTORY-MEM (HSTATE-H X)))
+            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+                                   (HSTATE-OTEVS X)
+                                   (HSTATE-MEM X))
+                        Y))
+            (NOT (SET-EQUIV (DES-STATE-MEM Y)
+                            (HSTATE-MEM X)))
+            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
+           (SET-EQUIV (HSTATE-MEM X)
+                      (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                   (DES-STATE-TM Y)
+                                   (DES-STATE-MEM Y))))
+          :INSTRUCTIONS
+          (:PROMOTE
+           :EXPAND (:DV 1)
+           (:EQUIV
+            X
+            (HSTATE
+             (DES-STATE-TM Y)
+             (INSERT-OTEVS
+              (STEP-EVENTS
+               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+               (DES-STATE-TM Y)
+               (HISTORY-MEM (HSTATE-H X)))
+              (CDR (HISTORY-OTEVS (HSTATE-H X))))
+             (STEP-MEMORY
+              (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+              (DES-STATE-TM Y)
+              (HISTORY-MEM (HSTATE-H X)))
+             (HISTORY T (HISTORY-TM (HSTATE-H X))
+                      (HISTORY-OTEVS (HSTATE-H X))
+                      (HISTORY-MEM (HSTATE-H X))))
+            HSTATE-EQUAL)
+           (:REWRITE HSTATE-CONSTRUCTOR-DESTRUCTORS-PROPER)
+           :up :bash
+           :bash :bash
+           :bash)))
+
+ (local (defthm foo-4
+          (IMPLIES
+           (AND
+            (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                   (DES-STATE-TM Y))
+            (SET-EQUIV (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (DES-STATE-MEM Y))
+                       (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                    (DES-STATE-TM Y)
+                                    (HISTORY-MEM (HSTATE-H X))))
+            (HSTATEP X)
+            (VALID-LO-TEVS (HSTATE-OTEVS X)
+                           (DES-STATE-TM Y))
+            (HISTORY-OTEVS (HSTATE-H X))
+            (HSTATE-EQUAL
+             (HSTATE
+              (DES-STATE-TM Y)
+              (INSERT-OTEVS
+               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                            (DES-STATE-TM Y)
+                            (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X))))
+              (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                           (DES-STATE-TM Y)
+                           (HISTORY-MEM (HSTATE-H X)))
+              (HISTORY T (HISTORY-TM (HSTATE-H X))
+                       (HISTORY-OTEVS (HSTATE-H X))
+                       (HISTORY-MEM (HSTATE-H X))))
+             X)
+            (DES-STATEP Y)
+            (VALID-LO-TEVS (DES-STATE-TEVS Y)
+                           (DES-STATE-TM Y))
+            (HISTORY-VALID (HSTATE-H X))
+            (SET-EQUIV (DES-STATE-TEVS Y)
+                       (HISTORY-OTEVS (HSTATE-H X)))
+            (SET-EQUIV (DES-STATE-MEM Y)
+                       (HISTORY-MEM (HSTATE-H X)))
+            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+                                   (HSTATE-OTEVS X)
+                                   (HSTATE-MEM X))
+                        Y))
+            (NOT (SET-EQUIV (DES-STATE-TEVS Y)
+                            (HSTATE-OTEVS X)))
+            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
+           (SET-EQUIV (HSTATE-MEM X)
+                      (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                   (DES-STATE-TM Y)
+                                   (DES-STATE-MEM Y))))
+          :INSTRUCTIONS
+          (:PROMOTE
+           :EXPAND (:DV 1)
+           (:EQUIV
+            X
+            (HSTATE
+             (DES-STATE-TM Y)
+             (INSERT-OTEVS
+              (STEP-EVENTS
+               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+               (DES-STATE-TM Y)
+               (HISTORY-MEM (HSTATE-H X)))
+              (CDR (HISTORY-OTEVS (HSTATE-H X))))
+             (STEP-MEMORY
+              (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+              (DES-STATE-TM Y)
+              (HISTORY-MEM (HSTATE-H X)))
+             (HISTORY T (HISTORY-TM (HSTATE-H X))
+                      (HISTORY-OTEVS (HSTATE-H X))
+                      (HISTORY-MEM (HSTATE-H X))))
+            HSTATE-EQUAL)
+           (:REWRITE HSTATE-CONSTRUCTOR-DESTRUCTORS-PROPER)
+           :up :bash
+           :bash :bash
+           :bash)))
  
- (skip-proofs
-  (local (defthm c1
-           (implies (and (good-hstatep x)
-                         (good-des-statep y)
-                         (c x y)
-                         (not (b x y))
-                         (equal (des-state-tm y) (hstate-tm x)))
-                    (set-equiv (des-state-mem (c-witness-y-tm=x-tm x y))
-                               (des-state-mem (r x))))))
-  )
+ (local (defthm c1
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (c x y)
+                        (not (b x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (set-equiv (des-state-mem (c-witness-y-tm=x-tm x y))
+                              (des-state-mem (r x))))
+          :hints (("goal" :in-theory (disable history-tevs-car)
+                   :use ((:instance history-tevs-car)
+                         (:instance step-memory-congruence
+                                    (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
+                                    (tm (des-state-tm y))
+                                    (mem (des-state-mem y))
+                                    (mem-equiv (history-mem (hstate-h x)))))
+                   :do-not '(eliminate-destructors)))))
 
  (local (defthm lwfsk2f-C-2
           (implies (and (good-hstatep x)
@@ -1951,7 +2277,4 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                   (:instance lwfsk2f-C)
                   (:instance lwfsk2f-suff (z (c-witness-y-tm=x-tm x y)))
                   (:instance lwfsk2f-suff (z (c-witness-y-tm<x-tm y)))))))
- 
-
  )
-
