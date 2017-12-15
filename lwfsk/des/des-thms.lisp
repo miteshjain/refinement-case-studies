@@ -86,17 +86,23 @@
            (equal (valid-lo-tevs tevs time)
                   (valid-lo-tevs-high tevs time))))
 
-;; The execution of an event is modeled as an uninterpreted function
-;; execute-event. It takes the current time and the current memory as
-;; input and returns an updated memory and a list of new events that
-;; are scheduled to be executed at some time > tm. The new events are
-;; added into Sch.
+;; The execution of an event is modeled as an uninterpreted
+;; functions. The functions takes the current time and the current
+;; memory as input and returns an updated memory and a list of new
+;; events that are scheduled to be executed at some time > tm and a
+;; list of events to be removed from the Sch. The new events are added
+;; into Sch and list of events are removed from Sch.
 
 (encapsulate
- (((step-events * * *) => *)
+ (((step-events-add * * *) => *)
+  ((step-events-rm * * *) => *)
   ((step-memory  * * *) => *))
  
- (local (defun step-events (ev tm mem)
+ (local (defun step-events-add (ev tm mem)
+          (declare (ignore ev tm mem))
+          nil))
+
+ (local (defun step-events-rm (ev tm mem)
           (declare (ignore ev tm mem))
           nil))
 
@@ -104,13 +110,19 @@
           (declare (ignore ev tm mem))
           nil))
 
- (defthm step-events-contract
+ (defthm step-events-add-contract
    (implies (and (eventp ev)
                  (timep tm)
                  (memoryp mem))
-            (and (lo-tep (step-events ev tm mem))
-                 (valid-lo-tevs (step-events ev tm mem)
-                               (1+ tm)))))
+            (and (lo-tep (step-events-add ev tm mem))
+                 (valid-lo-tevs (step-events-add ev tm mem)
+                                (1+ tm)))))
+
+ (defthm step-events-rm-contract
+   (implies (and (eventp ev)
+                 (timep tm)
+                 (memoryp mem))
+            (lo-tep (step-events-rm ev tm mem))))
  
  (defthm step-memory-contract
    (implies (and (eventp ev)
@@ -119,14 +131,23 @@
             (memoryp (step-memory ev tm mem))))
 
  ;; needs a loop-stopper bad rewrite
- (defthmd step-events-congruence
+ (defthmd step-events-add-congruence
    (implies (and (memoryp mem)
                  (memoryp mem-equiv)
                  (eventp ev)
                  (timep tm)
                  (set-equiv (double-rewrite mem) (double-rewrite mem-equiv)))
-            (set-equiv (step-events ev tm mem)
-                       (step-events ev tm mem-equiv))))
+            (set-equiv (step-events-add ev tm mem)
+                       (step-events-add ev tm mem-equiv))))
+
+ (defthmd step-events-rm-congruence
+   (implies (and (memoryp mem)
+                 (memoryp mem-equiv)
+                 (eventp ev)
+                 (timep tm)
+                 (set-equiv (double-rewrite mem) (double-rewrite mem-equiv)))
+            (set-equiv (step-events-rm ev tm mem)
+                       (step-events-rm ev tm mem-equiv))))
 
  (defthmd step-memory-congruence
    (implies (and (memoryp mem)
@@ -172,31 +193,40 @@
  lo-tep
  (:fixed-vars ((timed-eventp e2))))
 
-(defunc remove-ev-high (tevs ev)
-  "Removes all occurrences of ev in tevs"
-  :input-contract (and (lo-tep tevs) (timed-eventp ev))
-  :output-contract (lo-tep (remove-ev-high tevs ev))
-  (filter* (lambda (e1 e2) (not (equal e1 e2))) tevs ev))
+(defunc remove-tev-high (tev tevs)
+  "Removes all occurrences of tev in tevs"
+  :input-contract (and (timed-eventp tev) (lo-tep tevs) )
+  :output-contract (lo-tep (remove-tev-high tev tevs))
+  (filter* (lambda (e1 e2) (not (equal e1 e2))) tevs tev))
 
-(defunc remove-ev (tevs ev)
-  "Removes all occurrences of ev in tevs"
-  :input-contract (and (lo-tep tevs) (timed-eventp ev))
-  :output-contract (lo-tep (remove-ev tevs ev))
+(defunc remove-tev (tev tevs)
+  "Removes all occurrences of tev in tevs"
+  :input-contract (and (timed-eventp tev) (lo-tep tevs))
+  :output-contract (lo-tep (remove-tev tev tevs))
   (if (endp tevs)
       nil
-    (if (equal (car tevs) ev)
-        (remove-ev (cdr tevs) ev)
-      (cons (car tevs) (remove-ev (cdr tevs) ev)))))
+    (if (equal (car tevs) tev)
+        (remove-tev tev (cdr tevs))
+      (cons (car tevs) (remove-tev tev (cdr tevs))))))
 
-(defthmd remove-ev-equiv
-  (implies (and (lo-tep tevs) (timed-eventp ev))
-           (equal (remove-ev tevs ev)
-                  (remove-ev-high tevs ev))))
+(defthmd remove-tev-equiv
+  (implies (and (timed-eventp tev) (lo-tep tevs))
+           (equal (remove-tev tev tevs)
+                  (remove-tev-high tev tevs))))
 
-(defthm remove-ev-member-equal
-  (implies (and (timed-eventp ev)
+(defthm remove-tev-member-equal
+  (implies (and (timed-eventp tev)
                 (lo-tep tevs))
-           (not (member-equal ev (remove-ev tevs ev)))))
+           (not (member-equal tev (remove-tev tev tevs)))))
+
+
+(defunc remove-tevs (l tevs)
+  "Removes all occurrences of timed-events in l from tevs"
+  :input-contract (and (lo-tep l) (lo-tep tevs))
+  :output-contract (lo-tep (remove-tevs l tevs))
+  (if (endp l)
+      tevs
+    (remove-tev (car l) (remove-tevs (cdr l) tevs))))
 
 (in-theory
  (disable des-state des-statep des-state-tm
@@ -211,17 +241,21 @@
            (equal (timed-event-tm tev) tm)
            (member-equal tev tevs)
            (let* ((ev (timed-event-ev tev))
-                  (new-evs (step-events ev tm mem))
+                  (add-tevs (step-events-add ev tm mem))
+                  (rm-tevs (step-events-rm ev tm mem))
                   (new-mem (step-memory ev tm mem))
-                  (new-tevs (remove-ev tevs tev))
-                  (new-tevs (append new-evs new-tevs)))
+                  (new-tevs (remove-tevs rm-tevs (remove-tev tev tevs)))
+                  (new-tevs (append new-tevs add-tevs)))
              (des-state-equal v (des-state tm new-tevs new-mem))))))
   :witness-dcls ((declare (xargs :guard (and (des-statep w) (des-statep v))
                                  :verify-guards nil))))
 
-(verify-guards spec-ev-transp)
+(verify-guards spec-ev-transp
+               :hints (("goal" :in-theory (disable (:definition timed-event-ev)
+                                                   (:definition timed-event-tm)))))
 
 (defunbc spec-transp (w v)
+  "transition relation of DES"
   :input-contract (and (des-statep w) (des-statep v))
   (let ((w-tm (des-state-tm w))
         (w-tevs (des-state-tevs w))
@@ -349,6 +383,36 @@
                     odes-state-otevs odes-state-tm odes-state-mem
                     timed-event-ev timed-event-tm))
 
+
+(encapsulate
+ nil
+ (local (in-theory (enable  o-lo-tep-definition-rule)))
+
+ (local (defunc remove-tev-ordered (x l)
+          :input-contract (and (timed-eventp x) (o-lo-tep l))
+          :output-contract (o-lo-tep (remove-tev-ordered x l))
+          (cond ((endp l) nil)
+                ((equal x (car l)) (cdr l))
+                ((te-< x (car l)) l)
+                (t (cons (car l) (remove-tev-ordered x (cdr l)))))))
+
+ (local (defthm remove-tev-equal-remove-tev-ordered
+          (implies (and (timed-eventp x) (o-lo-tep l))
+                   (equal (remove-tev x l)
+                          (remove-tev-ordered x l)))))
+ 
+ (defthm remove-tev-from-otevs
+   (implies (and (timed-eventp tev)
+                 (o-lo-tep otevs))
+            (o-lo-tep (remove-tev tev otevs))))
+ 
+ (defthm remove-tevs-from-otevs
+   (implies (and (lo-tep l)
+                 (o-lo-tep otevs))
+           (o-lo-tep (remove-tevs l otevs))))
+ )
+  
+  
 (defunc odes-transf (s)
   "transition function for the implementation"
   :input-contract (odes-statep s)
@@ -361,10 +425,12 @@
       (b* ((tev (car otevs))
            (ev (timed-event-ev tev))
            (et (timed-event-tm tev))
-           (new-tevs (step-events ev et mem))
+           (add-tevs (step-events-add ev et mem))
+           (rm-tevs (step-events-rm ev et mem))
            (new-mem (step-memory ev et mem))
            (new-otevs (cdr otevs))
-           (new-otevs (insert-otevs new-tevs new-otevs))
+           (new-otevs (remove-tevs rm-tevs new-otevs))
+           (new-otevs (insert-otevs add-tevs new-otevs))
            (new-tm (timed-event-tm tev)))
         (odes-state new-tm new-otevs new-mem)))))
 
@@ -428,15 +494,17 @@
       (let* ((tev (car otevs))
              (ev (timed-event-ev tev))
              (et (timed-event-tm tev))
-             (new-tevs (step-events ev et mem))
+             (add-tevs (step-events-add ev et mem))
+             (rm-tevs (step-events-rm ev et mem))
              (new-mem (step-memory ev et mem))
              (new-otevs (cdr otevs))
-             (new-otevs (insert-otevs new-tevs new-otevs))
+             (new-otevs (remove-tevs rm-tevs new-otevs))
+             (new-otevs (insert-otevs add-tevs new-otevs))
              (new-tm (timed-event-tm tev)))
         (hstate new-tm new-otevs new-mem hist)))))
 
 
-;; OptDES refines HoptDES under a refinement map P
+;; OptDES refines HoptDES under the refinement map P
 (defunc P (s)
   :input-contract (odes-statep s)
   :output-contract (hstatep (P s))
@@ -558,6 +626,64 @@
    :hints (("goal" :in-theory (enable set-equiv))))
  )
 
+
+ (encapsulate
+ nil
+ (local (defunc remove-tev-ordered (x l)
+          :input-contract (and (timed-eventp x) (o-lo-tep l))
+          :output-contract (o-lo-tep (remove-tev-ordered x l))
+          :function-contract-hints (("goal" :in-theory (enable o-lo-tep-definition-rule)))
+          (cond ((endp l) nil)
+                ((equal x (car l)) (cdr l))
+                ((te-< x (car l)) l)
+                (t (cons (car l) (remove-tev-ordered x (cdr l)))))))
+
+ (local (defthm remove-tev-equal-remove-tev-ordered
+ (implies (and (timed-eventp x) (o-lo-tep l))
+          (equal (remove-tev x l)
+                 (remove-tev-ordered x l)))
+ :hints (("goal" :in-theory (enable o-lo-tep-definition-rule)))))
+      
+        
+ (local (defthm l1a
+  (implies (and (o-lo-tep (cons tev l))
+                (o-lo-tep l)
+                (timed-eventp tev)
+                (timed-eventp x))
+           (o-lo-tep (cons tev (remove-tev x l))))
+  :hints (("goal" :in-theory (enable o-lo-tep-definition-rule)))))
+
+
+
+(local (in-theory (disable remove-tev-equal-remove-tev-ordered)))
+
+(local (defthmd l1b
+  (implies (and (lo-tep r)
+                (lo-tep l)
+                (consp r)
+                (implies (and (o-lo-tep (cons tev l))
+                              (lo-tep (cdr r))
+                              (timed-eventp tev))
+                         (o-lo-tep (cons tev (remove-tevs (cdr r) l))))
+                (lo-tep (cons tev l))
+                (ordered-lo-tep (cons tev l))
+                (timed-eventp tev))
+           (o-lo-tep (cons tev (remove-tevs r l))))
+  :hints (("goal" :do-not-induct t
+           :use ((:instance o-lo-tep-cdr (l (cons tev (remove-tevs (cdr r) l))))
+                 (:instance l1a (x (car r)) (l (remove-tevs (cdr r) l))))
+           :in-theory (disable o-lo-tep-cdr l1a ordered-lo-tep-definition-rule)))))
+
+(defthm remove-tevs-o-lo-tep
+    (implies (and (o-lo-tep (cons tev l))
+                  (lo-tep r)
+                  (timed-eventp tev))
+             (o-lo-tep (cons tev (remove-tevs r l))))
+    :hints (("goal" :in-theory (enable o-lo-tep-definition-rule remove-tevs)
+             :induct (remove-tevs r l))
+            ("Subgoal *1/2'" :use ((:instance l1b)))))
+)
+
 (encapsulate
  nil
  (local (defthm cons-setequiv-insert
@@ -581,28 +707,24 @@
                    (valid-lo-tevs (append l1 l2) tm1))))
  
  (defthm valid-lo-tevs-insert-otevs
-          (implies (and (o-lo-tep l1) (lo-tep l2)
-                        (timep tm1) (timep tm2)
-                        (>= tm2 tm1)
-                        (valid-lo-tevs l1 tm1)
-                        (valid-lo-tevs l2 tm2))
-                   (valid-lo-tevs (insert-otevs l2 l1) tm1))
-          :hints (("goal" :use ((:instance valid-lo-tevs-append)
-                                (:instance append-setequiv-insert-tevs
-                                           (x l2) (l l1))
-                                (:instance valid-lo-tevs-setequiv
-                                           (l2 (append l1 l2))
-                                           (l1 (insert-otevs l2 l1))
-                                           (tm tm1)))
-                   :in-theory (disable valid-lo-tevs-append
-                                       valid-lo-tevs-setequiv
-                                       append-setequiv-insert-tevs)
-                   :do-not-induct t)))
+   (implies (and (o-lo-tep l1) (lo-tep l2)
+                 (timep tm1) (timep tm2)
+                 (>= tm2 tm1)
+                 (valid-lo-tevs l1 tm1)
+                 (valid-lo-tevs l2 tm2))
+            (valid-lo-tevs (insert-otevs l2 l1) tm1))
+   :hints (("goal" :use ((:instance valid-lo-tevs-append)
+                         (:instance append-setequiv-insert-tevs
+                                    (x l2) (l l1))
+                         (:instance valid-lo-tevs-setequiv
+                                    (l2 (append l1 l2))
+                                    (l1 (insert-otevs l2 l1))
+                                    (tm tm1)))
+            :in-theory (disable valid-lo-tevs-append
+                                valid-lo-tevs-setequiv
+                                append-setequiv-insert-tevs)
+            :do-not-induct t)))
  
- (local (defthmd fw1
-          (implies (and (o-lo-tep l) (consp l))
-                   (o-lo-tep (cdr l)))))
-
  (local (defthm l1
           (implies (and (lo-tep x) (timed-eventp tev)
                         (o-lo-tep (cons tev l))
@@ -615,8 +737,8 @@
           :hints (("goal" :in-theory (disable valid-lo-tevs-insert-otevs
                                               insert-otevs-definition-rule
                                               valid-lo-tevs-o-lo-tep timed-event
-                                              VALID-LO-TEVS->=-TM fw1)
-                   :use ((:instance fw1 (l (cons tev l)))
+                                              VALID-LO-TEVS->=-TM )
+                   :use ((:instance o-lo-tep-cdr (l (cons tev l)))
                          (:instance valid-lo-tevs-insert-otevs
                                     (l1 l) (l2 x)
                                     (tm1 (timed-event-tm tev))
@@ -634,7 +756,8 @@
           :hints (("goal" :in-theory (disable valid-lo-tevs-insert-otevs
                                               insert-otevs-definition-rule
                                               valid-lo-tevs-o-lo-tep timed-event
-                                              VALID-LO-TEVS->=-TM fw1 l1)
+                                              VALID-LO-TEVS->=-TM  l1
+                                              VALID-LO-TEVS-SETEQUIV)
                    :use ((:instance l1 (tm (1+ (timed-event-tm tev)))))))))
 
  (local (defthm l3
@@ -656,66 +779,110 @@
           (implies (and (o-lo-tep (cons tev l)) (timep tm)
                         (timed-eventp tev))
                    (valid-lo-tevs l (timed-event-tm tev)))))
+ 
+ (local (defthm lemma
+          (implies (and (lo-tep x)
+                        (timed-eventp tev)
+                        (o-lo-tep (cons tev l))
+                        (timep tm)
+                        (>= (timed-event-tm tev) tm)
+                        (valid-lo-tevs l tm)
+                        (valid-lo-tevs x (1+ (timed-event-tm tev))))
+                   (valid-lo-tevs (insert-otevs x l)
+                                  (timed-event-tm tev)))))
+ 
+ (defthm remove-tev-valid-1-general
+   (implies (and (lo-tep l) (timep tm) (timed-eventp tev)
+                 (valid-lo-tevs l tm))
+            (valid-lo-tevs (remove-tev tev l) tm))
+   :hints (("Goal" :in-theory (enable valid-lo-tevs-definition-rule))))
 
-  (local (defthm lemma
-           (implies (and (lo-tep x)
-                         (timed-eventp tev)
-                         (o-lo-tep (cons tev l))
-                         (timep tm)
-                         (>= (timed-event-tm tev) tm)
-                         (valid-lo-tevs l tm)
-                         (valid-lo-tevs x (1+ (timed-event-tm tev))))
-                    (valid-lo-tevs (insert-otevs x l)
-                                   (timed-event-tm tev)))))
- 
- (local (defthm lemma-1
-          (implies (and (odes-statep s)
-                        (valid-lo-tevs (odes-state-otevs s)
-                                       (odes-state-tm s))
-                        (consp (odes-state-otevs s)))
-                   (valid-lo-tevs
-                    (insert-otevs (step-events
-                                   (timed-event-ev (car (odes-state-otevs s)))
-                                   (timed-event-tm (car (odes-state-otevs s)))
-                                   (odes-state-mem s))
-                                  (cdr (odes-state-otevs s)))
-                    (timed-event-tm (car (odes-state-otevs s)))))
-        :hints (("Goal" :in-theory (disable valid-lo-tevs->=-tm
-                                            no-events-at-tm-top-of-queue-1
-                                            no-events-at-tm-top-of-queue-2)))))
- 
- (defthm good-odes-inductive
-   (implies (good-odes-statep s)
-            (good-odes-statep (odes-transf s)))
-   :rule-classes (:forward-chaining :rewrite))
+ (defthm remove-tevs-valid-lo-tevs
+          (implies (and (lo-tep l) (timep tm) (lo-tep l1)
+                        (valid-lo-tevs l tm))
+                   (valid-lo-tevs (remove-tevs l1 l) tm))
+          :hints (("Goal" :in-theory (enable valid-lo-tevs-definition-rule))))
+              
+  (defthm good-odes-inductive
+    (implies (good-odes-statep s)
+             (good-odes-statep (odes-transf s)))
+    :rule-classes (:forward-chaining :rewrite))
 
- (local (defthm lemma-2
-          (implies (and (hstatep s)
-                        (valid-lo-tevs (hstate-otevs s)
-                                       (hstate-tm s))
-                        (consp (hstate-otevs s)))
-                   (valid-lo-tevs
-                    (insert-otevs (step-events
-                                   (timed-event-ev (car (hstate-otevs s)))
-                                   (timed-event-tm (car (hstate-otevs s)))
-                                   (hstate-mem s))
-                                  (cdr (hstate-otevs s)))
-                    (timed-event-tm (car (hstate-otevs s)))))
-          :hints (("Goal" :in-theory (disable valid-lo-tevs->=-tm
-                                              no-events-at-tm-top-of-queue-1
-                                              no-events-at-tm-top-of-queue-2)))))
+  (defthm good-hstate-inductive
+    (implies (good-hstatep s)
+             (good-hstatep (hodes-transf s)))
+    :hints (("Goal" :in-theory (disable
+                                no-events-at-tm-top-of-queue-1
+                                no-events-at-tm-top-of-queue-2)))
+    :rule-classes (:forward-chaining :rewrite))
+
+  )
  
- (defthm good-hstate-inductive
-   (implies (good-hstatep s)
-            (good-hstatep (hodes-transf s)))
-   :hints (("Goal" :in-theory (disable
-                               no-events-at-tm-top-of-queue-1
-                               no-events-at-tm-top-of-queue-2)))
-   :rule-classes (:forward-chaining :rewrite))
+
+(encapsulate
+ nil
+ (local (defthm remove-tev-equal-remove
+          (implies (and (lo-tep l) (timed-eventp tev))
+                   (equal (remove-tev tev l)
+                          (remove-equal tev l)))))
+
+ (local (defun induct-list (r l)
+          (if (endp r)
+              l
+            (cons (car r) (induct-list (cdr r) l)))))
+ 
+ 
+ (local (defthm a11
+          (implies (and (true-listp tevs)
+                        (true-listp r2))
+                   (equal (set-difference-equal tevs (cons r1 r2))
+                          (set-difference-equal (remove-equal r1 tevs) r2)))
+          :hints (("goal" :induct (induct-list tevs r1)))))
+
+ 
+ (local (defthm a2
+          (implies (and (lo-tep tevs)
+                        (lo-tep r))
+                   (equal (remove-tevs r tevs)
+                          (set-difference-equal tevs r)))))
+
+ ;; (defthm remove-tevs-l-equiv-is-set-equiv
+ ;;   (implies (and (lo-tep tevs)
+ ;;                 (lo-tep r)
+ ;;                 (lo-tep r-equiv)
+ ;;                 (set-equiv r r-equiv))
+ ;;            (set-equiv (remove-tevs r tevs)
+ ;;                       (remove-tevs r-equiv tevs))))
+  (defthm remove-tevs-l-equiv-is-set-equiv
+     (implies (and (lo-tep tevs)
+                  (lo-tep l)
+                  (lo-tep l-equiv)
+                  (set-equiv l l-equiv))
+             (set-equiv (remove-tevs l tevs)
+                        (remove-tevs l-equiv tevs))))
 
  )
+ 
 
+(encapsulate
+ nil
 
+ (local (defthm remove-tev-equal-remove
+          (implies (and (lo-tep l) (timed-eventp tev))
+                   (equal (remove-tev tev l)
+                          (remove tev l)))))
+
+ (local (in-theory (disable remove-tevs-l-equiv-is-set-equiv)))
+ (defthmd remove-tevs-l-equiv-is-set-equiv-1
+   (implies (and (lo-tep tevs)
+                 (lo-tep l)
+                 (lo-tep l-equiv)
+                 (set-equiv l l-equiv))
+            (set-equiv (remove-tevs tevs l)
+                       (remove-tevs tevs l-equiv))))
+ 
+ )
+ 
 
 (encapsulate
  nil
@@ -729,7 +896,7 @@
                    (set-equiv (insert-otevs l otevs)
                               (insert-otevs l-equiv otevs)))))
 
- (local (defthm insert-otevs-l-equiv-is-equal
+ (local (defthmd insert-otevs-l-equiv-is-equal
           (implies (and (o-lo-tep otevs)
                         (lo-tep l)
                         (lo-tep l-equiv)
@@ -741,6 +908,25 @@
                          (:instance o-lo-tep-set-equiv-is-equal (x (insert-otevs l otevs))
                                     (y (insert-otevs l-equiv otevs))))))))
 
+ (local (defthm insert-otevs-l-equiv-is-equal-1
+          (implies (and (o-lo-tep otevs)
+                        (o-lo-tep otevs-equiv)
+                        (set-equiv otevs otevs-equiv) 
+                        (lo-tep l)
+                        (lo-tep l-equiv)
+                        (set-equiv l l-equiv))
+                   (equal (insert-otevs l otevs)
+                          (insert-otevs l-equiv otevs-equiv)))
+          :hints (("Goal"
+                   :in-theory (disable insert-otevs-l-equiv-is-equal)                   
+                   :use ((:instance insert-otevs-l-equiv-is-set-eqiuv)
+                         (:instance o-lo-tep-set-equiv-is-equal (x (insert-otevs l otevs))
+                                    (y (insert-otevs l-equiv otevs)))
+                         (:instance o-lo-tep-set-equiv-is-equal (x otevs)
+                                     (y otevs-equiv)))))))
+
+ 
+            
  ;; Not sure if it is useful here and/or there might be a better place for
  ;; this congruence relation
  ;; (defthm hodes-transf-congruence
@@ -748,7 +934,7 @@
  ;;            (hstate-equal (hodes-transf s)
  ;;                          (hodes-transf w)))
  ;;   :hints (("goal" :in-theory (disable insert-otevs-l-equiv-is-equal)
- ;;            :use ((:instance step-events-congruence
+ ;;            :use ((:instance step-events-add-congruence
  ;;                             (ev (timed-event-ev (car (hstate-otevs s))))
  ;;                             (tm (timed-event-tm (car (hstate-otevs s))))
  ;;                             (mem (hstate-mem s))
@@ -760,10 +946,10 @@
  ;;                             (mem-equiv (hstate-mem w)))
  ;;                  (:instance insert-otevs-l-equiv-is-equal
  ;;                             (otevs (cdr (hstate-otevs s)))
- ;;                             (l (step-events (timed-event-ev (car (hstate-otevs s)))
+ ;;                             (l (step-events-add (timed-event-ev (car (hstate-otevs s)))
  ;;                                             (timed-event-tm (car (hstate-otevs s)))
  ;;                                             (hstate-mem s)))
- ;;                             (l-equiv (step-events (timed-event-ev (car (hstate-otevs s)))
+ ;;                             (l-equiv (step-events-add (timed-event-ev (car (hstate-otevs s)))
  ;;                                                   (timed-event-tm (car (hstate-otevs s)))
  ;;                                                   (hstate-mem w)))))))
  ;;   :rule-classes (:congruence))
@@ -780,7 +966,12 @@
                                               valid-lo-tevs->=-tm
                                               no-events-at-tm-top-of-queue-1
                                               no-events-at-tm-top-of-queue-2)
-                   :use ((:instance step-events-congruence
+                   :use ((:instance step-events-add-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance step-events-rm-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
                                     (mem-equiv (ODES-STATE-MEM S))
@@ -791,49 +982,110 @@
                                     (mem-equiv (ODES-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))))
                   ("Subgoal 3'"
-                   :use ((:instance step-events-congruence
+                   :use ((:instance step-events-add-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
                                     (mem-equiv (ODES-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
-                         (:instance insert-otevs-l-equiv-is-equal
-                                    (otevs (CDR (HSTATE-OTEVS W)))
-                                    (l (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                         (:instance step-events-rm-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance remove-tevs-l-equiv-is-set-equiv
+                                    (tevs (cdr (hstate-otevs w)))
+                                    (l (step-events-rm (timed-event-ev (car (hstate-otevs w)))
+                                                       (timed-event-tm (car (hstate-otevs w)))
+                                                       (odes-state-mem s)))
+                                    (l-equiv  (step-events-rm (timed-event-ev (car (hstate-otevs w)))
+                                                              (timed-event-tm (car (hstate-otevs w)))
+                                                              (hstate-mem w))))
+                         (:instance insert-otevs-l-equiv-is-equal-1
+                                    (otevs (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                                        (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                                        (ODES-STATE-MEM S))
+                                                        (CDR (HSTATE-OTEVS W))))
+                                    (otevs-equiv (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                                              (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                                              (HSTATE-MEM W))
+                                                              (CDR (HSTATE-OTEVS W))))
+                                    (l (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                     (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                     (ODES-STATE-MEM S)))
-                                    (l-equiv (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                    (l-equiv (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                           (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                           (HSTATE-MEM W)))))
-                   :in-theory (disable INSERT-OTEVS-L-EQUIV-IS-EQUAL))
+                   :in-theory (disable insert-otevs-l-equiv-is-equal-1 remove-tevs-l-equiv-is-set-equiv))
                   ("Subgoal 2'"
-                   :use ((:instance step-events-congruence
+                   :use ((:instance step-events-add-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
                                     (mem-equiv (ODES-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
-                         (:instance insert-otevs-l-equiv-is-equal
-                                    (otevs (CDR (HSTATE-OTEVS W)))
-                                    (l (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                         (:instance step-events-rm-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance remove-tevs-l-equiv-is-set-equiv
+                                    (tevs (cdr (hstate-otevs w)))
+                                    (l (step-events-rm (timed-event-ev (car (hstate-otevs w)))
+                                                       (timed-event-tm (car (hstate-otevs w)))
+                                                       (odes-state-mem s)))
+                                    (l-equiv  (step-events-rm (timed-event-ev (car (hstate-otevs w)))
+                                                              (timed-event-tm (car (hstate-otevs w)))
+                                                              (hstate-mem w))))
+                         (:instance insert-otevs-l-equiv-is-equal-1
+                                    (otevs (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                                        (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                                        (ODES-STATE-MEM S))
+                                                        (CDR (HSTATE-OTEVS W))))
+                                    (otevs-equiv (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                                              (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                                              (HSTATE-MEM W))
+                                                              (CDR (HSTATE-OTEVS W))))
+                                    (l (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                     (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                     (ODES-STATE-MEM S)))
-                                    (l-equiv (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                    (l-equiv (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                           (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                           (HSTATE-MEM W)))))
-                   :in-theory (disable INSERT-OTEVS-L-EQUIV-IS-EQUAL))
+                   :in-theory (disable INSERT-OTEVS-L-EQUIV-IS-EQUAL-1 remove-tevs-l-equiv-is-set-equiv))
                   ("Subgoal 1"
-                   :use ((:instance step-events-congruence
+                   :use ((:instance step-events-add-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
                                     (mem-equiv (ODES-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
-                         (:instance insert-otevs-l-equiv-is-equal
-                                    (otevs (CDR (HSTATE-OTEVS W)))
-                                    (l (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                         (:instance step-events-rm-congruence
+                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
+                                    (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
+                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem (HSTATE-MEM W)))
+                         (:instance remove-tevs-l-equiv-is-set-equiv
+                                    (tevs (cdr (hstate-otevs w)))
+                                    (l (step-events-rm (timed-event-ev (car (hstate-otevs w)))
+                                                       (timed-event-tm (car (hstate-otevs w)))
+                                                       (odes-state-mem s)))
+                                    (l-equiv  (step-events-rm (timed-event-ev (car (hstate-otevs w)))
+                                                              (timed-event-tm (car (hstate-otevs w)))
+                                                              (hstate-mem w))))
+                         (:instance insert-otevs-l-equiv-is-equal-1
+                                    (otevs (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                                        (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                                        (ODES-STATE-MEM S))
+                                                        (CDR (HSTATE-OTEVS W))))
+                                    (otevs-equiv (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                                                              (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
+                                                                              (HSTATE-MEM W))
+                                                              (CDR (HSTATE-OTEVS W))))
+                                    (l (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                     (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                     (ODES-STATE-MEM S)))
-                                    (l-equiv (STEP-EVENTS (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
+                                    (l-equiv (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                           (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
-                                                          (HSTATE-MEM W)))))))))
+                                                          (HSTATE-MEM W)))))
+                   :in-theory (disable INSERT-OTEVS-L-EQUIV-IS-EQUAL-1 remove-tevs-l-equiv-is-set-equiv)))))
 
  (local (defthm A-implies-good-states
           (implies (A s w)
@@ -902,7 +1154,7 @@
                 (consp (history-otevs (hstate-h x)))
                 (<= (des-state-tm y) (hstate-tm x))
                 (set-equiv (des-state-tevs y)
-                                 (history-otevs (hstate-h x)))
+                           (history-otevs (hstate-h x)))
                 (set-equiv (des-state-mem y)
                            (history-mem (hstate-h x)))))))
 
@@ -920,88 +1172,55 @@
               (len (events-at-tm (des-state-tevs y) (hstate-tm x))))
            (des-state-tm y))))
 
-#|
-(defunc rankls (y x)
-  :input-contract (and (des-statep y) (hstatep x))
-  :output-contract (natp (rankls y x))
-  (nfix (- (1+ (hstate-tm x)) (des-state-tm y))))
-
-Consider the following 
-x = < 10, <>, m', <t, {(e,10)}, m>
-y  = < 10, {(e,10)}, m>
-
-where execution e modifies m to m'.
-
-x is a good-hstatep y is good-des-statep
-
-xCy holds
-
-xBy does not hold
-
-Hence we have to show that there is a z such that y --> z /\ xCz /\
-rankls(z,x) < rankls(y,x).
-
-rankls (y,x) = (- (1+ 10) 10) = 1
-
-y --> z 
-where z = <10, <>, mem'> 
-xCz since xBz holds.
-
-rankls(z,x)  = (- (1+ 10) 10) = 1
-
-Rankls(z,x) = rankls(y,x) and does not decrease.
-
-|#
 
 (encapsulate
-  nil
-  ;; remove-ev on ordererd list
+ nil
+ ;; remove-tev on ordererd list
+ (local (defthm o-lo-tep-member-equal
+          (implies (o-lo-tep (cons x l))
+                   (not (member-equal x l)))
+          :hints (("goal" :in-theory (enable te-<-definition-rule o-lo-tep member-equal)))))
+ 
+ (local  (defthm o-lo-tep-noduplicates
+           (implies (o-lo-tep x)
+                    (no-duplicatesp-equal x))
+           :hints (("goal" :in-theory (enable te-<-definition-rule no-duplicatesp-equal o-lo-tep)))))
 
-  (local (defthm o-lo-tep-member-equal
-    (implies (o-lo-tep (cons x l))
-             (not (member-equal x l)))
-    :hints (("goal" :in-theory (enable te-<-definition-rule o-lo-tep member-equal)))))
-                     
-  (local  (defthm o-lo-tep-noduplicates
-    (implies (o-lo-tep x)
-             (no-duplicatesp-equal x))
-    :hints (("goal" :in-theory (enable te-<-definition-rule no-duplicatesp-equal o-lo-tep)))))
+ (local (defthm remove-tev-not-member
+          (implies (and (o-lo-tep x) (timed-eventp tev)
+                        (not (member-equal tev x)))
+                   (equal (remove-tev tev x)
+                          x))))
 
-  (local (defthm remove-ev-not-member
-    (implies (and (o-lo-tep x) (timed-eventp tev)
-                  (not (member-equal tev x)))
-             (equal (remove-ev x tev)
-                    x))))
+ (defthm remove-tev-o-lo-tep
+   (implies (and (o-lo-tep x) (consp x))
+            (equal (remove-tev (car x) x)
+                   (cdr x))))
+ )
 
-  (defthm remove-ev-o-lo-tep
-    (implies (and (o-lo-tep x) (consp x))
-             (equal (remove-ev x (car x))
-                    (cdr x))))
-  )
+(encapsulate
+ nil
+ (local (defthm remove-tev-member-1
+          (implies (and (lo-tep l) (timed-eventp tev)
+                        (not (equal x tev))
+                        (member-equal x l))
+                   (member-equal x (remove-tev tev l)))))
+ 
+ (local (defthm remove-tev-preserves-subset
+          (implies (and (lo-tep x) (lo-tep y) (timed-eventp tev)
+                        (subsetp-equal (double-rewrite x) (double-rewrite y)))
+                   (subsetp-equal (remove-tev tev x)
+                                  (remove-tev tev y)))
+          :hints (("goal" :in-theory (enable  subsetp-equal)))))
 
- (encapsulate
-  nil
-  (local (defthm remove-ev-member-1
-           (implies (and (lo-tep l) (timed-eventp tev)
-                         (not (equal x tev))
-                         (member-equal x l))
-                    (member-equal x (remove-ev l tev)))))
-                    
-  (local (defthm remove-ev-preserves-subset
-           (implies (and (lo-tep x) (lo-tep y) (timed-eventp tev)
-                         (subsetp-equal (double-rewrite x) (double-rewrite y)))
-                    (subsetp-equal (remove-ev x tev)
-                                   (remove-ev y tev)))
-           :hints (("goal" :in-theory (enable  subsetp-equal)))))
+ (defthmd remove-tev-preserves-set-equiv
+   (implies (and (lo-tep x) (lo-tep y) (timed-eventp tev)
+                 (set-equiv x y))
+            (set-equiv (remove-tev tev x)
+                       (remove-tev tev y)))
+   :hints (("goal" :in-theory (e/d (set-equiv)))))
 
-  (defthmd remove-ev-preserves-set-equiv
-           (implies (and (lo-tep x) (lo-tep y) (timed-eventp tev)
-                         (set-equiv  x y))
-                    (set-equiv (remove-ev x tev)
-                               (remove-ev y tev)))
-           :hints (("goal" :in-theory (e/d (set-equiv)))))
-
-  )
+ )
 
 (encapsulate
   nil
@@ -1031,14 +1250,60 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
    (implies (and (lo-tep l)
                  (o-lo-tep x) (consp x)
                  (lo-tep y) (set-equiv x y))
-            (set-equiv (append l (remove-ev y (car x)))
+            (set-equiv (append l (remove-tev (car x) y))
                        (insert-otevs l (cdr x))))
    :hints (("Goal" :do-not-induct t
-            :use ((:instance remove-ev-preserves-set-equiv
+            :use ((:instance remove-tev-preserves-set-equiv
                              (x y) (y x)
                              (tev (car x))))
-            :in-theory (disable remove-ev-definition-rule
-                                remove-ev-preserves-set-equiv))))
+            :in-theory (disable remove-tev-definition-rule
+                                remove-tev-preserves-set-equiv))))
+
+(encapsulate
+ nil
+ (local (defthm lemma
+          (implies (and (lo-tep l)
+                        (lo-tep r)
+                        (o-lo-tep x)
+                        x (lo-tep y)
+                        (set-equiv x y))
+                   (set-equiv  (remove-tevs r (cdr x))
+                               (remove-tevs r (remove-tev (car x) y))))
+          :hints (("goal" :do-not-induct t
+                   :use ((:instance remove-tev-preserves-set-equiv
+                                    (x y) (y x)
+                                    (tev (car x)))
+                         (:instance remove-tev-o-lo-tep (x x))
+                         (:instance remove-tevs-l-equiv-is-set-equiv-1
+                                    (l (cdr x))
+                                    (l-equiv (remove-tev (car x) y))
+                                    (tevs r)))
+                   :in-theory (disable remove-tev-definition-rule
+                                       remove-tev-o-lo-tep
+                                       remove-tev-preserves-set-equiv
+                                       remove-tevs-l-equiv-is-set-equiv)))))
+
+ (defthm new-tevs-append-insert-lemma-1
+   (implies (and (lo-tep l) (lo-tep r)
+                 (o-lo-tep x) (consp x)
+                 (lo-tep y) (set-equiv x y))
+            (set-equiv (append l (remove-tevs r (remove-tev (car x) y)))
+                       (insert-otevs l (remove-tevs r (cdr x)))))
+   :hints (("Goal" :do-not-induct t
+            :use ((:instance remove-tev-preserves-set-equiv (y x) (x y)
+                             (tev (car x)))
+                  (:instance remove-tevs-l-equiv-is-set-equiv-1
+                                                    (l (remove-tev (car x) x))
+                                                    (l-equiv (remove-tev (car x) y))
+                                                    (tevs r)))
+            :in-theory (disable remove-tev-definition-rule
+                                remove-tev-o-lo-tep
+                                remove-tev-preserves-set-equiv
+                                remove-tevs-l-equiv-is-set-equiv
+                                remove-tevs-l-equiv-is-set-equiv-1))))
+ 
+           
+)
 
 (encapsulate
  nil
@@ -1082,27 +1347,48 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                         (member-equal (car (hstate-otevs s)) (des-state-tevs w))
                         (equal (hstate-tm s) (des-state-tm w))
                         (set-equiv
-                         (insert-otevs (step-events (timed-event-ev (car (hstate-otevs s)))
-                                                    (hstate-tm s)
-                                                    (hstate-mem s))
-                                       (cdr (hstate-otevs s)))
-                         (append (step-events (timed-event-ev (car (hstate-otevs s)))
+                         (insert-otevs (step-events-add (timed-event-ev (car (hstate-otevs s)))
+                                                        (hstate-tm s)
+                                                        (hstate-mem s))
+                                       (remove-tevs (step-events-rm (timed-event-ev (car (hstate-otevs s)))
+                                                                    (des-state-tm w)
+                                                                    (hstate-mem s))
+                                                    (cdr (hstate-otevs s))))
+                         (append (step-events-add (timed-event-ev (car (hstate-otevs s)))
                                               (des-state-tm w)
                                               (des-state-mem w))
-                                 (remove-ev (des-state-tevs w)
-                                            (car (hstate-otevs s)))))
+                                 (remove-tevs (step-events-rm (timed-event-ev (car (hstate-otevs s)))
+                                                              (des-state-tm w)
+                                                              (des-state-mem w))
+                                              (remove-tev (car (hstate-otevs s))
+                                                          (des-state-tevs w)))))
                         (set-equiv (step-memory (timed-event-ev (car (hstate-otevs s)))
                                                 (hstate-tm s)
                                                 (hstate-mem s))
                                    (step-memory (timed-event-ev (car (hstate-otevs s)))
                                                 (des-state-tm w)
                                                 (des-state-mem w)))))
-          :hints (("Subgoal 2'" :in-theory (disable step-events-congruence)
-                   :use ((:instance step-events-congruence
-                                    (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S))))
-                                    (tm (DES-STATE-TM W))
-                                    (mem (DES-STATE-MEM W))
-                                    (mem-equiv (HSTATE-MEM S)))))
+          :hints (("Subgoal 2'" :in-theory (disable step-events-add-congruence
+                                                    step-events-rm-congruence
+                                                    remove-tevs-l-equiv-is-set-equiv)
+                   :use ((:instance step-events-add-congruence
+                                    (ev (timed-event-ev (car (hstate-otevs s))))
+                                    (tm (des-state-tm w))
+                                    (mem (des-state-mem w))
+                                    (mem-equiv (hstate-mem s)))
+                         (:instance step-events-rm-congruence
+                                    (ev (timed-event-ev (car (hstate-otevs s))))
+                                    (tm (des-state-tm w))
+                                    (mem (des-state-mem w))
+                                    (mem-equiv (hstate-mem s)))
+                         (:instance remove-tevs-l-equiv-is-set-equiv
+                                    (tevs (cdr (hstate-otevs s)))
+                                    (l (step-events-rm (timed-event-ev (car (hstate-otevs s)))
+                                                       (des-state-tm w)
+                                                       (des-state-mem w)))
+                                    (l-equiv (step-events-rm (timed-event-ev (car (hstate-otevs s)))
+                                                             (des-state-tm w)
+                                                             (hstate-mem s))))))
                   ("Subgoal 1'" :in-theory (disable step-memory-congruence)
                    :use ((:instance step-memory-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S))))
@@ -1110,31 +1396,79 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                                     (mem (DES-STATE-MEM W))
                                     (mem-equiv (HSTATE-MEM S))))))))
  
+
+ (local (defthm  bla
+          (implies (and 
+                    (SET-EQUIV
+                     (INSERT-OTEVS
+                      (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                       (DES-STATE-TM W)
+                                       (HSTATE-MEM S))
+                      (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                                   (DES-STATE-TM W)
+                                                   (HSTATE-MEM S))
+                                   (CDR (HSTATE-OTEVS S))))
+                     (APPEND
+                      (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                       (DES-STATE-TM W)
+                                       (DES-STATE-MEM W))
+                      (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                                   (DES-STATE-TM W)
+                                                   (DES-STATE-MEM W))
+                                   (REMOVE-TEV (CAR (HSTATE-OTEVS S))
+                                               (DES-STATE-TEVS W)))))
+                    (EQUAL (HSTATE-TM S) (DES-STATE-TM W)))
+
+                   (SET-EQUIV
+                    (INSERT-OTEVS
+                     (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                      (HSTATE-TM S)
+                                      (HSTATE-MEM S))
+                     (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                                  (HSTATE-TM S)
+                                                  (HSTATE-MEM S))
+                                  (CDR (HSTATE-OTEVS S))))
+                    (APPEND
+                     (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                                  (DES-STATE-TM W)
+                                                  (DES-STATE-MEM W))
+                                  (REMOVE-TEV (CAR (HSTATE-OTEVS S))
+                                              (DES-STATE-TEVS W)))
+                     (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
+                                      (DES-STATE-TM W)
+                                      (DES-STATE-MEM W)))))))
  (local (defthmd lwfsk2a-spec-step
-          (implies (and (b s w)
+          (implies (and (B s w)
                         (consp (hstate-otevs s))
                         (equal (hstate-tm s)
                                (timed-event-tm (car (hstate-otevs s)))))
-                   (spec-ev-transp w (r (hodes-transf s))))
+                   (spec-ev-transp w (R (hodes-transf s))))
           :hints (("goal" :use ((:instance spec-ev-transp-suff
                                            (tev (car (hstate-otevs s)))
-                                           (v (r (hodes-transf s))))
+                                           (v (R (hodes-transf s))))
                                 (:instance e1))
                    :in-theory (disable spec-ev-transp-suff 
                                        acl2::set-equiv-is-an-equivalence
+                                       remove-tevs-l-equiv-is-set-equiv
                                        acl2::commutativity-of-append-under-set-equiv
                                        e1
-                                       spec-ev-transp)))))
-
- (defthm lwfsk2a-l1-cons
-   (implies (and (B s w)
-                 (consp (hstate-otevs s))
-                 (equal (hstate-tm s)
-                        (timed-event-tm (car (hstate-otevs s)))))
-            (and (spec-ev-transp w (R (hodes-transf s)))
-                 (B (hodes-transf s) (R (hodes-transf s)))))
-   :hints (("goal" :use ((:instance lwfsk2a-spec-step)
-                         (:instance lwfsk2a-B)))))
+                                       spec-ev-transp))
+                  ("Subgoal 12" :use ((:instance bla))
+                   :in-theory (disable bla))
+                  ("Subgoal 11" :use ((:instance bla))
+                   :in-theory (disable bla))
+                  ("Subgoal 10" :use ((:instance bla))
+                   :in-theory (disable bla)))))
+ 
+ (local (defthm lwfsk2a-l1-cons
+          (implies (and (B s w)
+                        (consp (hstate-otevs s))
+                        (equal (hstate-tm s)
+                               (timed-event-tm (car (hstate-otevs s)))))
+                   (and (spec-ev-transp w (R (hodes-transf s)))
+                        (B (hodes-transf s) (R (hodes-transf s)))))
+          :hints (("goal" :use ((:instance lwfsk2a-spec-step)
+                                (:instance lwfsk2a-B))))))
 
  (local (defthm events-at-tm-cons
           (implies (and (lo-tep x) (consp x))
@@ -1206,9 +1540,26 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                                     (y (hstate-otevs s))
                                     (tm (des-state-tm w))))))))
 
+ ;; (local (defthm car-valid-lo-tevs
+ ;;          (implies (and (timep tm) (o-lo-tep l) l
+ ;;                        (valid-lo-tevs l tm)
+ ;;                        (not (equal tm (timed-event-tm (car l)))))
+ ;;                   (< tm (timed-event-tm (car l))))
+ ;;          :hints (("goal" :in-theory (enable valid-lo-tevs-definition-rule)))))
 
+ ;; (local (defthm bla1
+ ;;          (implies (and (timep tm1) (timep tm2)
+ ;;                        (lo-tep l1)
+ ;;                        (o-lo-tep l2)
+ ;;                        (equal tm1 tm2)
+ ;;                        (valid-lo-tevs l1 tm1)
+ ;;                        (set-equiv l1 l2) l2
+ ;;                        (not (equal tm1 (timed-event-tm (car l2)))))
+ ;;                   (< tm1 (timed-event-tm (car l2))))))
+ 
+ 
  (local (defthmd lwfsk2d-l2a
-          (implies (and (B s w)
+          (implies (and (B s w) ;(HSTATE-OTEVS S)
                         (not (equal (hstate-tm s)
                                     (timed-event-tm (car (hstate-otevs s))))))
                    (< (des-state-tm w) (hstate-tm (hodes-transf s))))
@@ -1228,7 +1579,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                    (<= (1+ y) x))))
 
  (local (defthmd lwfsk2d-l2b
-          (implies (and (B s w)
+          (implies (and (B s w) 
                         (not (equal (hstate-tm s)
                                     (timed-event-tm (car (hstate-otevs s))))))
                    (<= (1+ (des-state-tm w)) (hstate-tm (hodes-transf s))))
@@ -1239,7 +1590,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                                             hodes-transf-definition-rule))))))
 
  (local (defthmd lwfsk2d-l2c
-          (implies (and (B s w)
+          (implies (and (B s w) ;(hstate-otevs s)
                         (not (equal (hstate-tm s)
                                     (timed-event-tm (car (hstate-otevs s))))))
                    (let ((u (hodes-transf s)))
@@ -1352,7 +1703,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
             :in-theory (disable hodes-transf-definition-rule
                                 b-definition-rule
                                 c-definition-rule))))
-  )
+ )
 
 (defun-sk lwfsk2a (u w)
   (exists v
@@ -1422,7 +1773,6 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
 (defun-sk lwfsk2f (x y)
   (exists z
     (and (C x z)
-         ;; (good-des-statep z)
          (spec-transp y z)
          (< (rankls z x) (rankls y x))))
   :witness-dcls ((declare (xargs :guard (and (hstatep x) (des-statep y))
@@ -1445,7 +1795,8 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                         (< y x))
                    (<= (1+ y) x))))
 
- (local (defthm valid-lo-tevs-y-x-tm
+
+  (local (defthm valid-lo-tevs-y-x-tm
           (implies (and (good-hstatep x)  
                         (C x y)
                         (< (des-state-tm y) (hstate-tm x)))
@@ -1484,10 +1835,14 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                   (hstate
                    (timed-event-tm (car (history-otevs (hstate-h x))))
                    (insert-otevs
-                    (step-events (timed-event-ev (car (history-otevs (hstate-h x))))
+                    (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
                                  (timed-event-tm (car (history-otevs (hstate-h x))))
                                  (history-mem (hstate-h x)))
-                    (cdr (history-otevs (hstate-h x))))
+                    (REMOVE-TEVS
+                     (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                     (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                     (HISTORY-MEM (HSTATE-H X)))
+                     (CDR (HISTORY-OTEVS (HSTATE-H X)))))
                    (step-memory (timed-event-ev (car (history-otevs (hstate-h x))))
                                 (timed-event-tm (car (history-otevs (hstate-h x))))
                                 (history-mem (hstate-h x)))
@@ -1514,17 +1869,19 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
      (if (consp hotevs)
          (let* ((tev (car hotevs))
                 (ev (timed-event-ev tev))
-                (new-evs (step-events ev y-tm y-mem))
+                (add-tevs (step-events-add ev y-tm y-mem))
+                (rm-tevs (step-events-rm ev y-tm y-mem))
                 (z-mem (step-memory ev y-tm y-mem))
-                (z-tevs (remove-ev y-tevs tev))
-                (z-tevs (append new-evs z-tevs)))
+                (z-tevs (remove-tev tev y-tevs))
+                (z-tevs (remove-tevs rm-tevs z-tevs))
+                (z-tevs (append add-tevs z-tevs)))
            (des-state y-tm z-tevs z-mem))
        (des-state (1+ y-tm) y-tevs y-mem))))
 
-
- (in-theory (enable good-histp-definition-rule))
- (in-theory (disable valid-lo-tevs->=-tm 
-                     valid-lo-tevs-definition-rule))
+;; local added
+ (local (in-theory (enable good-histp-definition-rule)))
+ (local (in-theory (disable valid-lo-tevs->=-tm 
+                     valid-lo-tevs-definition-rule)))
 
  (local (defthmd lwfsk2f-spec-ev-transp
           (implies (and (good-hstatep x)
@@ -1585,77 +1942,110 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
           (implies (and (eventp ev)
                         (timep tm)
                         (memoryp mem))
-                   (not (events-at-tm (step-events ev tm mem) tm)))
-          :hints (("Goal" :use ((:instance step-events-contract)
+                   (not (events-at-tm (step-events-add ev tm mem) tm)))
+          :hints (("Goal" :use ((:instance step-events-add-contract)
                                 (:instance no-event-<-tm
-                                           (l (step-events ev tm mem))
+                                           (l (step-events-add ev tm mem))
                                            (tm1 tm)
                                            (tm2 (1+ tm))))
-                   :in-theory (e/d (timep) (step-events-contract
+                   :in-theory (e/d (timep) (step-events-add-contract
                                             no-event-<-tm))))))
- 
- (local (defthm events-at-tm-remove-ev
+
+ (local (defthm events-at-tm-remove-tev
           (implies (and (timed-eventp tev) (lo-tep E)
                         (timep tm))
-                   (equal (events-at-tm (remove-ev E tev) tm)
-                          (remove-ev (events-at-tm E tm) tev)))))
+                   (equal (events-at-tm (remove-tev tev E) tm)
+                          (remove-tev tev (events-at-tm E tm))))))
+
+ (local (defthm len-remove-tev-<=
+          (implies (and (timed-eventp tev) (timep tm)
+                        (lo-tep E))
+                   (<= (len (remove-tev tev E))
+                       (len E)))
+          :rule-classes (:rewrite :linear)))
 
  (local (defthm l1
-          (implies (and (timed-eventp tev) (timep tm)
-                        (lo-tep E)
-                        (member-equal tev E))
-                   (< (len (remove-ev E tev))
-                      (len E)))))
+          (implies (and (lo-tep E) (lo-tep r) (timep tm) (timed-eventp tev))
+                   (<= (len (events-at-tm (remove-tev  tev (remove-tevs r E)) tm))
+                       (len (events-at-tm (remove-tevs r E) tm))))
+          :hints (("goal" :do-not-induct t
+                   :in-theory (disable remove-tevs-definition-rule events-at-tm-definition-rule)))
+          :rule-classes (:rewrite :linear)))
+
+ 
+ (local (defthm remove-tev-non-increasing-events-at-tm
+          (implies (and (lo-tep l) (timep tm) (timed-eventp tev))
+                   (<= (len (events-at-tm (remove-tev tev l) tm))
+                       (len (events-at-tm l tm))))
+          :hints (("Goal" :in-theory (enable events-at-tm-definition-rule)))
+          :rule-classes :linear))
+
+ (local (defthm l2
+          (implies (and (lo-tep E) (lo-tep r) (timep tm))
+                   (<= (len (events-at-tm (remove-tevs r E) tm))
+                       (len (events-at-tm E tm))))
+          :hints (("Goal" :in-theory (disable EVENTS-AT-TM-L-SET-EQUIV)))
+          :rule-classes (:rewrite :linear)))
+
 
  (local (defthm l3
           (implies (and (timed-eventp tev) (timep tm)
+                        (lo-tep E)
+                        (member-equal tev E))
+                   (< (len (remove-tev tev E))
+                      (len E)))
+          :rule-classes (:rewrite :linear)))
+
+ (local (defthm l3-1
+          (implies (and (timed-eventp tev) (timep tm)
+                        (lo-tep r) (lo-tep l2) (memoryp mem))
+                   (equal (len (events-at-tm (append (step-events-add (timed-event-ev tev)
+                                                                      tm mem)
+                                                     (remove-tevs r (remove-tev tev l2)))
+                                             tm))
+                          (len (events-at-tm (remove-tevs r (remove-tev tev l2)) tm))))
+          :hints (("Goal" :in-theory (disable EVENTS-AT-TM-L-SET-EQUIV)))
+          :rule-classes (:rewrite :linear)))
+
+ (local (defthm l3-2
+          (implies (and (timed-eventp tev) (timep tm)
                         (lo-tep l2) (memoryp mem)
+                        (lo-tep r)
                         (member-equal tev (events-at-tm l2 tm)))
-                   (< (len (events-at-tm (append (step-events
-                                                  (timed-event-ev tev)
-                                                  tm mem)
-                                                 (remove-ev l2 tev))
+                   (< (len (events-at-tm (append (step-events-add (timed-event-ev tev)
+                                                                  tm mem)
+                                                 (remove-tevs r (remove-tev tev l2)))
                                          tm))
                       (len (events-at-tm l2 tm))))
-          :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv
-                                              events-at-tm-definition-rule
-                                              timed-event
-                                              step-events-contract)
-                   :use ((:instance step-events-contract (ev (timed-event-ev tev))))
-                   :do-not-induct t))))
+          :hints (("Goal" :in-theory (disable EVENTS-AT-TM-L-SET-EQUIV)))
+          :rule-classes (:rewrite :linear)))
 
  (local (defthm l3a
           (implies (and (lo-tep l) (consp l))
                    (member-equal (car l) (events-at-tm l (timed-event-tm (car l)))))
           :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv)))))
 
+
  (local (defthm l3b
-          (implies (and (lo-tep l2) (memoryp mem) (consp l2))
-                   (< (len (events-at-tm (append (step-events
-                                                  (timed-event-ev (car l2))
-                                                  (timed-event-tm (car l2)) mem)
-                                                 (remove-ev l2 (car l2)))
+          (implies (and (lo-tep l2) (memoryp mem) (consp l2)
+                        (lo-tep r))
+                   (< (len (events-at-tm (append (step-events-add (timed-event-ev (car l2))
+                                                                  (timed-event-tm (car l2)) mem)
+                                                 (remove-tevs r (remove-tev (car l2) l2)))
                                          (timed-event-tm (car l2))))
                       (len (events-at-tm l2 (timed-event-tm (car l2))))))
-          :hints (("Goal" :use ((:instance l3 (tev (car l2))
-                                           (tm (timed-event-tm (car l2)))))
-                   :in-theory (disable l3 events-at-tm-l-set-equiv)
-                   :do-not-induct t)
-                  ("Goal'''" :in-theory (enable member-equal events-at-tm-definition-rule))))) 
+          :hints (("Goal" :in-theory (disable EVENTS-AT-TM-L-SET-EQUIV)))
+          :rule-classes (:rewrite :linear)))        
 
- (local (in-theory (disable l1 l3 events-at-tm-remove-ev
-                            no-new-evs-at-tm
-                            events-at-tm-distributes-over-append)))
-
-
- (local (defthm l3c (implies (and (good-hstatep x)
-                                  (good-des-statep y)
-                                  (c x y)
-                                  (not (b x y))
-                                  (equal (des-state-tm y) (hstate-tm x)))
-                             (member-equal (car (history-otevs (hstate-h x)))
-                                           (events-at-tm (des-state-tevs y)
-                                                         (des-state-tm y))))
+ (local (defthm l3c
+          (implies (and (good-hstatep x)
+                        (good-des-statep y)
+                        (c x y)
+                        (not (b x y))
+                        (equal (des-state-tm y) (hstate-tm x)))
+                   (member-equal (car (history-otevs (hstate-h x)))
+                                 (events-at-tm (des-state-tevs y)
+                                               (des-state-tm y))))
           :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv
                                               b-definition-rule
                                               good-des-statep-definition-rule
@@ -1676,45 +2066,53 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
    :hints (("Goal" :in-theory (disable l3b l3c
                                        events-at-tm-l-set-equiv
                                        b-definition-rule history
-                                       historyp
+                                       historyp  history-tevs-car
                                        events-at-tm-definition-rule)
             :use ((:instance l3c)
-                  (:instance l3
+                  (:instance l3-2
                              (tev (car (history-otevs (hstate-h x))))
                              (tm (timed-event-tm (car (history-otevs (hstate-h x)))))
                              (l2 (DES-STATE-TEVS Y))
-                             (mem (DES-STATE-MEM Y)))
+                             (mem (DES-STATE-MEM Y))
+                             (r (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                                (DES-STATE-TM Y)
+                                                (DES-STATE-MEM Y))))
                   (:instance l3b
                              (l2 (DES-STATE-TEVS Y))
-                             (mem (DES-STATE-MEM Y)))
+                             (mem (DES-STATE-MEM Y))
+                             (r (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                                (DES-STATE-TM Y)
+                                                (DES-STATE-MEM Y))))
                   (:instance history-tevs-car)))))
-)
+ )
 
                   
 (encapsulate
  nil
- (local (defthm remove-ev-valid-1
+ ;;todo takes long time to admit 20s
+
+ (local (defthm remove-tev-valid-1
           (implies (and (o-lo-tep l) (timep tm) (consp l)
                         (valid-lo-tevs l tm))
-                   (valid-lo-tevs (remove-ev l (car l)) tm))
+                   (valid-lo-tevs (remove-tev (car l) l) tm))
           :hints (("Goal" :in-theory (enable valid-lo-tevs-definition-rule)))))
 
- (local (defthm remove-ev-valid-2
+ (local (defthm remove-tev-valid-2
           (implies (and (o-lo-tep l) (timep tm) (consp l)
                         (lo-tep l-equiv)
                         (set-equiv l l-equiv)
                         (valid-lo-tevs l tm))
-                   (valid-lo-tevs (remove-ev l-equiv (car l)) tm))
-          :hints (("Goal" :use ((:instance remove-ev-valid-1)
-                                (:instance remove-ev-preserves-set-equiv
+                   (valid-lo-tevs (remove-tev (car l) l-equiv) tm))
+          :hints (("Goal" :use ((:instance remove-tev-valid-1)
+                                (:instance remove-tev-preserves-set-equiv
                                            (x l) (y l-equiv)
                                            (tev (car l)))
                                 (:instance valid-lo-tevs-setequiv
-                                           (l2 (remove-ev l (car l)))
-                                           (l1 (remove-ev l-equiv (car l)))
+                                           (l2 (remove-tev (car l) l))
+                                           (l1 (remove-tev (car l) l-equiv))
                                            (tm tm)))
                    :in-theory (disable valid-lo-tevs-setequiv
-                                       remove-ev-valid-1)
+                                       remove-tev-valid-1)
                    :do-not-induct t))))
  
  ;; repeated
@@ -1728,6 +2126,27 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
           :hints (("Goal" :in-theory (e/d (valid-lo-tevs-definition-rule)
                                           (timed-event eventp))))))
 
+ (defthm valid-lo-tevs-distributes-over-append
+  (implies (and (lo-tep l1) (lo-tep l2)
+                        (timep tm))
+           (equal (valid-lo-tevs (append l1 l2) tm)
+                  (and (valid-lo-tevs l1 tm)
+                       (valid-lo-tevs l2 tm))))
+  :hints (("Goal" :in-theory (e/d (valid-lo-tevs-definition-rule)
+                                  (timed-event eventp)))))
+
+ ;; (local (defthm remove-tev-valid-1-general
+ ;;          (implies (and (lo-tep l) (timep tm) (timed-eventp tev)
+ ;;                        (valid-lo-tevs l tm))
+ ;;                   (valid-lo-tevs (remove-tev tev l) tm))
+ ;;          :hints (("Goal" :in-theory (enable valid-lo-tevs-definition-rule)))))
+
+ ;; (local (defthm remove-tevs-valid-lo-tevs
+ ;;          (implies (and (lo-tep l) (timep tm) (lo-tep l1)
+ ;;                        (valid-lo-tevs l tm))
+ ;;                   (valid-lo-tevs (remove-tevs l1 l) tm))
+ ;;          :hints (("Goal" :in-theory (enable valid-lo-tevs-definition-rule)))))
+
  (local (defthm lemma-1
           (implies (and (lo-tep l1) (timep tm) (consp l2)
                         (o-lo-tep l2)
@@ -1735,19 +2154,19 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                         (set-equiv l2 l2-equiv)
                         (valid-lo-tevs l1 (1+ tm))
                         (valid-lo-tevs l2 tm))
-                   (valid-lo-tevs (append l1 (remove-ev l2-equiv (car l2))) tm))
+                   (valid-lo-tevs (append l1 (remove-tev  (car l2) l2-equiv)) tm))
           :hints (("Goal" :use ((:instance valid-lo-tevs->=-tm
                                            (E l1) (t1 (1+ tm))
                                            (t2 tm)))
                    :do-not-induct t
-                   :in-theory (disable remove-ev-o-lo-tep timep
+                   :in-theory (disable remove-tev-o-lo-tep timep
                                        valid-lo-tevs-o-lo-tep
                                        o-lo-tep-definition-rule
                                        lo-tep
                                        valid-lo-tevs-definition-rule
-                                       remove-ev-definition-rule
-                                       timed-event)))))
- 
+                                       remove-tev-definition-rule
+                                       timed-event
+                                       valid-lo-tevs-append)))))
  (local (defthmd lwfsk2f-C-1
           (implies (and (good-hstatep x)
                         (good-des-statep y)
@@ -1755,13 +2174,58 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                         (not (B x y))
                         (equal (des-state-tm y) (hstate-tm x)))
                    (good-des-statep (C-witness-y-tm=x-tm x y)))
-          :hints (("Goal" :in-theory (disable remove-ev-o-lo-tep
+          :hints (("Goal" :in-theory (disable remove-tev-o-lo-tep
                                               valid-lo-tevs-o-lo-tep
                                               o-lo-tep-definition-rule
                                               lo-tep
                                               valid-lo-tevs-definition-rule
-                                              remove-ev-definition-rule
-                                              timed-event)))))
+                                              remove-tev-definition-rule
+                                              timed-event))
+                  ("subgoal 4.4" :use ((:instance valid-lo-tevs->=-tm
+                                                  (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
+                                                                      (des-state-tm y)
+                                                                      (des-state-mem y)))
+                                                  (t1 (1+ (des-state-tm y)))
+                                                  (t2 (des-state-tm y))))
+                   :in-theory (disable (:rewrite valid-lo-tevs->=-tm)))
+                  ("subgoal 4.3" :in-theory (disable remove-tev-valid-1-general
+                                                     remove-tevs-valid-lo-tevs)
+                   :use ((:instance remove-tev-valid-1-general
+                                    (l (des-state-tevs y))
+                                    (tm (des-state-tm y))
+                                    (tev (CAR (HISTORY-OTEVS (HSTATE-H X)))))
+                         (:instance remove-tevs-valid-lo-tevs
+                                    (l (remove-tev (car (history-otevs (hstate-h x)))
+                                                   (des-state-tevs y)))
+                                    (l1 (step-events-rm (timed-event-ev (car (history-otevs (hstate-h x))))
+                                                        (des-state-tm y)
+                                                        (des-state-mem y)))
+                                    (tm (des-state-tm y)))))
+                  ("subgoal 4.2" :use ((:instance valid-lo-tevs->=-tm
+                                                  (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
+                                                                      (des-state-tm y)
+                                                                      (des-state-mem y)))
+                                                  (t1 (1+ (des-state-tm y)))
+                                                  (t2 (des-state-tm y)))))
+                  ("subgoal 4.1" :use ((:instance valid-lo-tevs->=-tm
+                                                  (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
+                                                                      (des-state-tm y)
+                                                                      (des-state-mem y)))
+                                                  (t1 (1+ (des-state-tm y)))
+                                                  (t2 (des-state-tm y)))))
+                  ("subgoal 2.2" :use ((:instance valid-lo-tevs->=-tm
+                                                  (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
+                                                                      (des-state-tm y)
+                                                                      (des-state-mem y)))
+                                                  (t1 (1+ (des-state-tm y)))
+                                                  (t2 (des-state-tm y)))))
+                  ("subgoal 2.1" :use ((:instance valid-lo-tevs->=-tm
+                                                  (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
+                                                                      (des-state-tm y)
+                                                                      (des-state-mem y)))
+                                                  (t1 (1+ (des-state-tm y)))
+                                                  (t2 (des-state-tm y))))
+                   :in-theory (disable (:rewrite valid-lo-tevs->=-tm))))))
 
  (in-theory (disable  acl2::commutativity-of-append-under-set-equiv))
 
@@ -1789,7 +2253,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
              (HSTATE
               (DES-STATE-TM Y)
               (INSERT-OTEVS
-               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                             (DES-STATE-TM Y)
                             (HISTORY-MEM (HSTATE-H X)))
                (CDR (HISTORY-OTEVS (HSTATE-H X))))
@@ -1815,15 +2279,15 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
             (NOT (SET-EQUIV (DES-STATE-MEM Y)
                             (HSTATE-MEM X)))
             (EQUAL (DES-STATE-TM Y) (HSTATE-TM X))
-            (SET-EQUIV (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+            (SET-EQUIV (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                                     (DES-STATE-TM Y)
                                     (DES-STATE-MEM Y))
-                       (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                       (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                                     (DES-STATE-TM Y)
                                     (HISTORY-MEM (HSTATE-H X)))))
            (SET-EQUIV
             (HSTATE-OTEVS X)
-            (APPEND (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+            (APPEND (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                                  (DES-STATE-TM Y)
                                  (HISTORY-MEM (HSTATE-H X)))
                     (CDR (HISTORY-OTEVS (HSTATE-H X))))))
@@ -1835,7 +2299,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
             (HSTATE
              (DES-STATE-TM Y)
              (INSERT-OTEVS
-              (STEP-EVENTS
+              (STEP-EVENTS-ADD
                (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                (DES-STATE-TM Y)
                (HISTORY-MEM (HSTATE-H X)))
@@ -1855,11 +2319,129 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
            :BASH :BASH
            :BASH :BASH)))
 
- (local (defthm foo-2
+ (local (defthm p1
+          (implies (and (HSTATEP X) (DES-STATEP Y)
+                        (SET-EQUIV (DES-STATE-TEVS Y)
+                                   (HISTORY-OTEVS (HSTATE-H X)))
+                        (HISTORY-OTEVS (HSTATE-H X)))
+                   (set-equiv (REMOVE-TEV (CAR (HISTORY-OTEVS (HSTATE-H X)))
+                                          (DES-STATE-TEVS Y))
+                              (remove-tev (CAR (HISTORY-OTEVS (HSTATE-H X)))
+                                          (HISTORY-OTEVS (HSTATE-H X)))))
+          :hints (("goal" :use (:instance remove-tev-preserves-set-equiv
+                                          (x (DES-STATE-TEVS Y))
+                                          (y (HISTORY-OTEVS (HSTATE-H X)))
+                                          (tev (CAR (HISTORY-OTEVS (HSTATE-H X)))))))))
+
+ (local (defthm p2
+          (implies (and (HSTATEP X) (DES-STATEP Y)
+                        (SET-EQUIV (DES-STATE-TEVS Y)
+                                   (HISTORY-OTEVS (HSTATE-H X)))
+                        (HISTORY-OTEVS (HSTATE-H X)))
+                   (set-equiv (REMOVE-TEV (CAR (HISTORY-OTEVS (HSTATE-H X)))
+                                          (DES-STATE-TEVS Y))
+                              (cdr (HISTORY-OTEVS (HSTATE-H X)))))))
+
+ (local (defthmd p3
+          (implies (and (lo-tep r)
+                        (o-lo-tep x)
+                        x (lo-tep y)
+                        (set-equiv x y))
+                   (set-equiv  (remove-tevs r (cdr x))
+                               (remove-tevs r (remove-tev (car x) y))))
+          :hints (("goal" :do-not-induct t
+                   :use ((:instance remove-tev-preserves-set-equiv
+                                    (x y) (y x)
+                                    (tev (car x)))
+                         (:instance remove-tev-o-lo-tep (x x))
+                         (:instance remove-tevs-l-equiv-is-set-equiv-1
+                                    (l (cdr x))
+                                    (l-equiv (remove-tev (car x) y))
+                                    (tevs r)))
+                   :in-theory (disable remove-tev-definition-rule
+                                       remove-tev-o-lo-tep
+                                       remove-tev-preserves-set-equiv
+                                       remove-tevs-l-equiv-is-set-equiv)))))
+ 
+
+ (local (defthmd p4
+          (implies (and (lo-tep r1)
+                        (lo-tep r2)
+                        (o-lo-tep x)
+                        x (lo-tep y)
+                        (set-equiv x y)
+                        (set-equiv r1 r2))
+                   (set-equiv  (remove-tevs r1 (cdr x))
+                               (remove-tevs r2 (remove-tev (car x) y))))
+          :hints (("goal" :do-not-induct t
+                   :use ((:instance remove-tevs-l-equiv-is-set-equiv
+                                    (l r1)
+                                    (l-equiv r2)
+                                    (tevs (remove-tev (car x) y)))
+                         (:instance p3 (r r1)))
+                   :in-theory (disable p3
+                                       remove-tev-definition-rule
+                                       remove-tev-o-lo-tep
+                                       remove-tev-preserves-set-equiv
+                                       remove-tevs-l-equiv-is-set-equiv
+                                       remove-tevs-l-equiv-is-set-equiv-1)))))
+
+ (local (defthm p5
+          (implies (and (HSTATEP X) (DES-STATEP Y)
+                        (SET-EQUIV (DES-STATE-TEVS Y)
+                                   (HISTORY-OTEVS (HSTATE-H X)))
+                        (SET-EQUIV (DES-STATE-MEM Y)
+                                   (HISTORY-MEM (HSTATE-H X)))
+                        (HISTORY-OTEVS (HSTATE-H X)))
+                   (set-equiv
+                    (remove-tevs
+                     (step-events-rm (timed-event-ev (car (history-otevs (hstate-h x))))
+                                     (des-state-tm y)
+                                     (history-mem (hstate-h x)))
+                     (cdr (history-otevs (hstate-h x))))
+                    (remove-tevs
+                     (step-events-rm (timed-event-ev (car (history-otevs (hstate-h x))))
+                                     (des-state-tm y)
+                                     (des-state-mem y))
+                     (remove-tev (car (history-otevs (hstate-h x)))
+                                 (des-state-tevs y)))))
+          :hints (("goal" :use ((:instance step-events-rm-congruence
+                                           (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
+                                           (tm (des-state-tm y))
+                                           (mem (history-mem (hstate-h x)))
+                                           (mem-equiv (des-state-mem y)))
+                                (:instance p4
+                                           (x (HISTORY-OTEVS (HSTATE-H X)))
+                                           (r1 (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                                               (DES-STATE-TM Y)
+                                                               (HISTORY-MEM (HSTATE-H X))))
+                                           (r2 (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                                               (DES-STATE-TM Y)
+                                                               (DES-STATE-MEM Y)))
+                                           (y (DES-STATE-TEVS Y))))))))
+ 
+
+ (local (in-theory (disable p1 p2 p3 p4 p5)))
+
+ (local (defthm foo-2a
           (IMPLIES
            (AND
             (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
                    (DES-STATE-TM Y))
+            (SET-EQUIV
+             (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (DES-STATE-MEM Y))
+             (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (HISTORY-MEM (HSTATE-H X))))
+            (SET-EQUIV
+             (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                             (DES-STATE-TM Y)
+                             (DES-STATE-MEM Y))
+             (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                             (DES-STATE-TM Y)
+                             (HISTORY-MEM (HSTATE-H X))))
             (HSTATEP X)
             (VALID-LO-TEVS (HSTATE-OTEVS X)
                            (DES-STATE-TM Y))
@@ -1868,10 +2450,130 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
              (HSTATE
               (DES-STATE-TM Y)
               (INSERT-OTEVS
-               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                            (DES-STATE-TM Y)
-                            (HISTORY-MEM (HSTATE-H X)))
-               (CDR (HISTORY-OTEVS (HSTATE-H X))))
+               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                (DES-STATE-TM Y)
+                                (HISTORY-MEM (HSTATE-H X)))
+               (REMOVE-TEVS
+                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                (DES-STATE-TM Y)
+                                (HISTORY-MEM (HSTATE-H X)))
+                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
+              (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                           (DES-STATE-TM Y)
+                           (HISTORY-MEM (HSTATE-H X)))
+              (HISTORY T (HISTORY-TM (HSTATE-H X))
+                       (HISTORY-OTEVS (HSTATE-H X))
+                       (HISTORY-MEM (HSTATE-H X))))
+             X)
+            (VALID-LO-TEVS (HISTORY-OTEVS (HSTATE-H X))
+                           (DES-STATE-TM Y))
+            (DES-STATEP Y)
+            (VALID-LO-TEVS (DES-STATE-TEVS Y)
+                           (DES-STATE-TM Y))
+            (HISTORY-VALID (HSTATE-H X))
+            (SET-EQUIV (DES-STATE-TEVS Y)
+                       (HISTORY-OTEVS (HSTATE-H X)))
+            (SET-EQUIV (DES-STATE-MEM Y)
+                       (HISTORY-MEM (HSTATE-H X)))
+            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+                                   (HSTATE-OTEVS X)
+                                   (HSTATE-MEM X))
+                        Y))
+            (NOT (SET-EQUIV (DES-STATE-MEM Y)
+                            (HSTATE-MEM X)))
+            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
+           (SET-EQUIV
+            (HSTATE-OTEVS X)
+            (APPEND
+             (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (DES-STATE-MEM Y))
+             (REMOVE-TEVS
+              (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (DES-STATE-MEM Y))
+              (REMOVE-TEV (CAR (HISTORY-OTEVS (HSTATE-H X)))
+                          (DES-STATE-TEVS Y))))))
+          :INSTRUCTIONS
+          (:PROMOTE
+           :EXPAND (:DV 1)
+           (:EQUIV
+            X
+            (HSTATE
+             (DES-STATE-TM Y)
+             (INSERT-OTEVS
+              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+              (REMOVE-TEVS
+               (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X)))))
+             (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                          (DES-STATE-TM Y)
+                          (HISTORY-MEM (HSTATE-H X)))
+             (HISTORY T (HISTORY-TM (HSTATE-H X))
+                      (HISTORY-OTEVS (HSTATE-H X))
+                      (HISTORY-MEM (HSTATE-H X))))
+            HSTATE-EQUAL)
+           (:REWRITE HSTATE-CONSTRUCTOR-DESTRUCTORS-PROPER)
+           (:REWRITE APPEND-SETEQUIV-INSERT-TEVS)
+           :UP
+           (:DV 1 2)
+           (:REWRITE P5)
+           :UP
+           :UP
+           (:DV 1 1)
+           (:REWRITE STEP-EVENTS-ADD-CONGRUENCE
+                     ((MEM-EQUIV (DES-STATE-MEM Y))))
+           :UP
+           :UP
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH)))
+
+ (local (defthm foo-2b
+          (IMPLIES
+           (AND
+            (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                   (DES-STATE-TM Y))
+            (SET-EQUIV
+             (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (DES-STATE-MEM Y))
+             (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (HISTORY-MEM (HSTATE-H X))))
+            (SET-EQUIV
+             (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                             (DES-STATE-TM Y)
+                             (DES-STATE-MEM Y))
+             (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                             (DES-STATE-TM Y)
+                             (HISTORY-MEM (HSTATE-H X))))
+            (HSTATEP X)
+            (VALID-LO-TEVS (HSTATE-OTEVS X)
+                           (DES-STATE-TM Y))
+            (HISTORY-OTEVS (HSTATE-H X))
+            (HSTATE-EQUAL
+             (HSTATE
+              (DES-STATE-TM Y)
+              (INSERT-OTEVS
+               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                (DES-STATE-TM Y)
+                                (HISTORY-MEM (HSTATE-H X)))
+               (REMOVE-TEVS
+                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                (DES-STATE-TM Y)
+                                (HISTORY-MEM (HSTATE-H X)))
+                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                            (DES-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
@@ -1893,19 +2595,18 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                         Y))
             (NOT (SET-EQUIV (DES-STATE-TEVS Y)
                             (HSTATE-OTEVS X)))
-            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X))
-            (SET-EQUIV (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
-                                    (DES-STATE-MEM Y))
-                       (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
-                                    (HISTORY-MEM (HSTATE-H X)))))
+            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
            (SET-EQUIV
             (HSTATE-OTEVS X)
-            (APPEND (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                 (DES-STATE-TM Y)
-                                 (DES-STATE-MEM Y))
-                    (CDR (HISTORY-OTEVS (HSTATE-H X))))))
+            (APPEND
+             (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (DES-STATE-MEM Y))
+             (REMOVE-TEVS
+              (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                              (DES-STATE-TM Y)
+                              (DES-STATE-MEM Y))
+              (CDR (HISTORY-OTEVS (HSTATE-H X)))))))
           :INSTRUCTIONS
           (:PROMOTE
            :EXPAND (:DV 1)
@@ -1914,15 +2615,17 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
             (HSTATE
              (DES-STATE-TM Y)
              (INSERT-OTEVS
-              (STEP-EVENTS
-               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-               (DES-STATE-TM Y)
-               (HISTORY-MEM (HSTATE-H X)))
-              (CDR (HISTORY-OTEVS (HSTATE-H X))))
-             (STEP-MEMORY
-              (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-              (DES-STATE-TM Y)
-              (HISTORY-MEM (HSTATE-H X)))
+              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+              (REMOVE-TEVS
+               (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X)))))
+             (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                          (DES-STATE-TM Y)
+                          (HISTORY-MEM (HSTATE-H X)))
              (HISTORY T (HISTORY-TM (HSTATE-H X))
                       (HISTORY-OTEVS (HSTATE-H X))
                       (HISTORY-MEM (HSTATE-H X))))
@@ -1930,26 +2633,50 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
            (:REWRITE HSTATE-CONSTRUCTOR-DESTRUCTORS-PROPER)
            (:REWRITE APPEND-SETEQUIV-INSERT-TEVS)
            :UP
-           :BASH :BASH
-           :BASH :BASH
-           :BASH :BASH)))
+           (:DV 1 2)
+           (:REWRITE P5)
+           :UP
+           :UP
+           (:DV 1 1)
+           (:REWRITE STEP-EVENTS-ADD-CONGRUENCE
+                     ((MEM-EQUIV (DES-STATE-MEM Y))))
+           :UP
+           :UP
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH
+           :BASH)))
+
+
+ ;;todo
 
  (local (defthm c2
           (implies (and (good-hstatep x)
                         (good-des-statep y)
-                        (c x y)
-                        (not (b x y))
+                        (C x y)
+                        (not (B x y))
                         (equal (des-state-tm y) (hstate-tm x)))
                    (set-equiv (des-state-tevs (R x))
                               (des-state-tevs (c-witness-y-tm=x-tm x y))))
           :hints (("goal" :in-theory (disable history-tevs-car)
                    :use ((:instance history-tevs-car)
-                         (:instance step-events-congruence
+                         (:instance step-events-add-congruence
+                                    (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
+                                    (tm (des-state-tm y))
+                                    (mem (des-state-mem y))
+                                    (mem-equiv (history-mem (hstate-h x))))
+                         (:instance step-events-rm-congruence
                                     (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
                                     (tm (des-state-tm y))
                                     (mem (des-state-mem y))
                                     (mem-equiv (history-mem (hstate-h x)))))
                    :do-not '(eliminate-destructors)))))
+ 
 
  (local (defthm foo-3
           (IMPLIES
@@ -1970,10 +2697,14 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
              (HSTATE
               (DES-STATE-TM Y)
               (INSERT-OTEVS
-               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                            (DES-STATE-TM Y)
-                            (HISTORY-MEM (HSTATE-H X)))
-               (CDR (HISTORY-OTEVS (HSTATE-H X))))
+               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                (DES-STATE-TM Y)
+                                (HISTORY-MEM (HSTATE-H X)))
+               (REMOVE-TEVS
+                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                                (DES-STATE-TM Y)
+                                (HISTORY-MEM (HSTATE-H X)))
+                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                            (DES-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
@@ -2008,11 +2739,14 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
             (HSTATE
              (DES-STATE-TM Y)
              (INSERT-OTEVS
-              (STEP-EVENTS
-               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-               (DES-STATE-TM Y)
-               (HISTORY-MEM (HSTATE-H X)))
-              (CDR (HISTORY-OTEVS (HSTATE-H X))))
+              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+              (REMOVE-TEVS
+               (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X)))))
              (STEP-MEMORY
               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
               (DES-STATE-TM Y)
@@ -2045,10 +2779,14 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
              (HSTATE
               (DES-STATE-TM Y)
               (INSERT-OTEVS
-               (STEP-EVENTS (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                            (DES-STATE-TM Y)
-                            (HISTORY-MEM (HSTATE-H X)))
-               (CDR (HISTORY-OTEVS (HSTATE-H X))))
+              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+              (REMOVE-TEVS
+               (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X)))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
                            (DES-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
@@ -2083,11 +2821,14 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
             (HSTATE
              (DES-STATE-TM Y)
              (INSERT-OTEVS
-              (STEP-EVENTS
-               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-               (DES-STATE-TM Y)
-               (HISTORY-MEM (HSTATE-H X)))
-              (CDR (HISTORY-OTEVS (HSTATE-H X))))
+              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+              (REMOVE-TEVS
+               (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
+                               (DES-STATE-TM Y)
+                               (HISTORY-MEM (HSTATE-H X)))
+               (CDR (HISTORY-OTEVS (HSTATE-H X)))))
              (STEP-MEMORY
               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
               (DES-STATE-TM Y)
@@ -2205,6 +2946,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                                       good-des-statep-contract
                                       good-hstatep-contract
                                       (:rewrite events-at-tm-l-set-equiv)))))
+
  (defthmd case-exhaustive
    (implies (and (good-hstatep x)
                  (good-des-statep y)
@@ -2266,7 +3008,7 @@ Rankls(z,x) = rankls(y,x) and does not decrease.
                             lwfsk2f-suff)))
 
  
- (defthmd C-is-a-witness
+ (defthmd C-is-good
    (implies (and (C x y)
                  (not (B x y)))
             (lwfsk2f x y))

@@ -280,7 +280,6 @@
 ;; Hp-machine. Next we show that B-machine refines H-machine and then
 ;; H-machine refines DES
 
-
 (defdata bstate
   (record (tm . time)
           (otevs . o-lo-te)
@@ -403,29 +402,28 @@
 
 
 (encapsulate
- ((A (x y) t))
+ ((A1(s w) t))
  
- (local (defun A (x y)
-          (declare (ignore x y))
+ (local (defun A1(s w)
+          (declare (ignore s w))
           t))
 
  (defthm A-is-a-binary-relation
-   (booleanp (A x y)))
+   (booleanp (A1s w)))
  )
 
 (defthm P1-good
   (implies (good-bstatep s)
-           (A s (P1 s))))
-
+           (A1s (P1 s))))
 
 (defun-sk wfs-a (u w)
   (exists v
     (and (good-hstatep v)
          (h-transp w v)
-         (A u v))))
+         (A1u v))))
 
 (defthm A-is-a-bisimulation
-  (implies (and (A s w)
+  (implies (and (A1s w)
                 (good-bstatep u)
                 (b-transp s u))
            (wfs-a u w)))
@@ -517,8 +515,6 @@
          (< (rankls1 z x) (rankls1 y x)))))
 
 ;; Hp-machine
-
-
 (defdata hpstate
   (record (tm . time)
           (otevs . o-lo-te)
@@ -541,30 +537,54 @@
            (equal (hpstate-h s)
                   (hpstate-h w)))))
 
-
 (defunbc hp-transp (s u)
   :input-contract (and (hpstatep s) (hpstatep u))
   (let ((tm (hpstate-tm s))
         (otevs (hpstate-otevs s))
         (mem (hpstate-mem s)))
     (if (endp otevs)
-        (equal u (hpstate (1+ tm) otevs mem
-                          (list (bstate tm otevs mem)
-                                (bstate (1+ tm) otevs mem))))
-      (hp-tm-transp s u
-                    (timed-event-tm (car otevs))))))
+        (hpstate-equal u (hpstate (1+ tm) otevs mem
+                                  (list (bstate tm otevs mem)
+                                        (bstate (1+ tm) otevs mem))))
+      (hp-tm-transp s u (timed-event-tm (car otevs))))))
+
 (defun-sk hp-tm-transp (s u tm)
   (exists Etm
       (and (lo-tep Etm)
            (consp Etm) 
            (let* ((otevs (hpstate-otevs s))
                   (mem (hpstate-mem s))
-                  (res (execute-tevs-with-hist Etm otevs mem (list (bstate tm otevs mem))))
+                  (res (execute-tevs-with-hist Etm otevs mem (list (projB s))))
                   (new-otevs (first res))
                   (new-mem (second res))
                   (bseq (third res)))
              (and (subsetp-equal Etm (events-at-tm-otevs otevs tm))
                   (hpstate-equal u (hpstate tm new-otevs new-mem bseq)))))))
+
+(defunc execute-tevs-with-hist (tevs otevs mem bseq)
+  "executes events in tevs in the order they appear in the list"
+  :input-contract (and (lo-tep tevs) (o-lo-tep otevs) (memoryp mem) (bseqp bseq))
+  :output-contract (and (true-listp (execute-tevs-with-hist tevs otevs mem bseq))
+                        (o-lo-tep (first (execute-tevs-with-hist tevs otevs mem bseq)))
+                        (memoryp (second (execute-tevs-with-hist tevs otevs mem bseq)))
+                        (bseqp (third (execute-tevs-with-hist tevs otevs mem bseq))))
+  (cond ((endp tevs)
+         (list otevs mem bseq))
+        (t 
+         (let* ((tev (car tevs))
+                (ev (timed-event-ev tev))
+                (et (timed-event-tm tev))
+                (new-tevs (step-events ev et mem))
+                (new-mem (step-memory ev et mem))
+                (new-otevs (remove-ev-otevs otevs tev))
+                (new-otevs (insert-otevs new-tevs new-otevs))
+                (new-bseq (cons (bstate et new-otevs new-mem) bseq)))
+           (execute-tevs-with-hist (cdr tevs) new-otevs new-mem new-bseq)))))
+
+(defunc projB (s)
+  :input-contract (hpstatep s)
+  :output-contract (bstatep (projB s))
+  (bstate (hpstate-tm s) (hpstate-otevs s) (hpstate-mem s)))
 
 ; modes refines hp-machine under a refinement map P2
 (defunc P2 (s)
@@ -573,31 +593,28 @@
   (let ((tm (modes-state-tm s))
         (otevs (modes-state-otevs s))
         (mem (modes-state-mem s)))
-    (hpstate tm otevs mem (list (bstate tm otevs mem)))))
-
+    (hpstate tm otevs mem nil)))
                    
 (defunbc good-histhp (s)
   "Checks if the history component of an Hpstate is good"
   :input-contract (hpstatep s)
-  (let ((bseq (hpstate-h s)))
-    (implies (consp bseq)
-             (b-transp+ (hpstate-h s) (projB s)))))
+  (let ((bseg (hpstate-h s)))
+    (implies (consp bseg)
+             (b-transp+ bseg (projB s)))))
 
-(defunbc b-transp+ (seq u)
-  :input-contract (and (bseqp seq) (bstatep u))
-  (cond ((endp seq)
+(defunbc b-transp+ (seg u)
+  "seg is a B-machine segment ending at state u"
+  :input-contract (and (bsegp seg) (bstatep u))
+  (cond ((endp seg)
          nil)
-        ((endp (cdr seq))
-         (equal (car seq) u))
-        (t (and (equal (car seq) u)
-                (b-transp (cadr seq) (car seq))
-                (b-transp+ (cdr seq) (cadr seq))))))
-
-(defunc projB (s)
-  :input-contract (hpstatep s)
-  :output-contract (bstatep (projB s))
-  (bstate (hpstate-tm s) (hpstate-otevs s) (hpstate-mem s)))
-
+        ((endp (cdr seg))
+         (and (good-bstatep u)
+              (equal (car seg) u))
+         (t (and (good-bstatep u)
+                 (equal (car seg) u)
+                 (good-bstatep (cadr seg))
+                 (b-transp (cadr seg) u)
+                 (b-transp+ (cdr seg) (cadr seg)))))))
 
 (defunbc good-hpstatep (s)
   :input-contract (hpstatep s)
@@ -610,28 +627,20 @@
   (and (modes-statep s)
        (valid-lo-tevs (modes-state-otevs s) (modes-state-tm s))))
 
-
-
 (encapsulate
- ((A2 (x y) t))
+ ((A2 (s w) t))
  
- (local (defun A2 (x y)
-          (declare (ignore x y))
+ (local (defun A2 (s w)
+          (declare (ignore s w))
           t))
 
  (defthm A2-is-a-binary-relation
-   (booleanp (A2 x y)))
+   (booleanp (A2 s w)))
  )
 
 (defthm P2-good
   (implies (good-modes-statep s)
            (A2 s (P2 s))))
-
-(defun-sk wfs-a-1 (u w)
-  (exists v
-    (and (good-hpstatep v)
-         (hp-transp w v)
-         (A2 u v))))
 
 (defthm A2-is-a-bisimulation
   (implies (and (A2 s w)
@@ -639,6 +648,11 @@
                 (modes-transp s u))
            (wfs-a-1 u w)))
 
+(defun-sk wfs-a-1 (u w)
+  (exists v
+    (and (good-hpstatep v)
+         (hp-transp w v)
+         (A2 u v))))
 
 (defthm good-modes-state-inductive
   (implies (and (good-modes-statep s)
@@ -651,8 +665,13 @@
                 (hpstatep u)
                 (hp-transp s u))
            (good-hpstatep u)))
-
               
+;; hp-machine refines b-machine
+(defunc R2 (s)
+  :input-contract (hpstatep s)
+  :output-contract (bstatep (R2 s))
+  (projB s))
+
 (encapsulate
  ;;"SKS relation between a hp-state and a bstate"
  ((B2 (x y) t))
@@ -668,7 +687,6 @@
 (defthm R2-good
   (implies (good-hpstatep s)
            (B2 s (R2 s))))
-
 
 (encapsulate
  ((C2 (x y) t)
@@ -707,7 +725,6 @@
                 (hp-transp s u))
            (or (lwfsk2a-1 u w)
                (lwfsk2d-1 u w))))
-
 
 (defun-sk lwfsk2f-1 (x y)
   (exists z
