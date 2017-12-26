@@ -1,5 +1,5 @@
 (in-package "ACL2S")
-(include-book "pete-des")
+(include-book "des-thms")
 
 ;; This file includes only events needed to understand DES, our simple
 ;; discrete-event simulation system. All of the supporting theorems
