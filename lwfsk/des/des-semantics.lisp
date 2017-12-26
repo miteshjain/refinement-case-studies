@@ -344,7 +344,7 @@
     (hstate tm otevs mem (history nil 0 nil nil))))
 
 ;; We provide as witness a binary relation A and show that it is a
-;; bisimulation relation
+;; simulation relation
 
 (encapsulate
  ((A (x y) t))
@@ -365,11 +365,11 @@
 ;; each other, we ignore defining rankt and C. Also since both
 ;; machines are deterministic we have simplified the theorem by
 ;; dropping the existential quantifier in LWFSK2a . We can show that
-;; there is a bisimulation relation between OptDES and
+;; there is a simulation relation between OptDES and
 ;; HoptDES. However, showing that A is a LWFSK suffices for our
 ;; purpose.
 
-(defthm A-is-a-bisimulation
+(defthm A-is-a-simulation
   (implies (A s w)
            (A (odes-transf s)
               (hodes-transf w))))

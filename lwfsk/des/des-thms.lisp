@@ -1095,7 +1095,7 @@
                                               good-hstatep-definition-rule
                                               good-odes-statep-definition-rule)))))
  
- (defthmd A-is-a-bisimulation
+ (defthmd A-is-a-simulation
    (implies (and (A s w))
             (A (odes-transf s)
                (hodes-transf w)))
