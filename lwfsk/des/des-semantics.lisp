@@ -1,11 +1,11 @@
 (in-package "ACL2S")
-(include-book "des-thms")
+(include-book "aeps-thms")
 
-;; This file includes only events needed to understand DES, our simple
+;; This file incluaeps only events needed to understand AEPS, our simple
 ;; discrete-event simulation system. All of the supporting theorems
 ;; can be found in the included book.
 
-;; Data definitions for DES, a Discrete-Event Simulation system
+;; Data definitions for AEPS, a Discrete-Event Simulation system
 
 ;; Time is an integer
 (defdata time nat)
@@ -18,33 +18,33 @@
   (record (tm . time)
           (ev . event)))
 
-;; A list of timed-events
+;; A multiset of timed-events
 (defdata lo-te (listof timed-event))
 
-;; A memory maps a global variable (var) to a value (integer)
+;; A memory is a collection of global variable (var) and integer pair
 (defdata memory (alistof var integer))
 
-;; A state of the DES consists of the current time, the list of
+;; A state of the AEPS consists of the current time, the list of
 ;; timed-events to execute and the memory.
-(defdata des-state
+(defdata aeps-state
   (record (tm . time)
           (tevs . lo-te)
           (mem . memory)))
 
-;; The definition of des-state equality. The timed events are a set,
+;; The definition of aeps-state equality. The timed events are a set,
 ;; so we have to compare them using set equality. The memory is also a
 ;; set of variable, value pairs, so we also treat it as a set.
-(defunbc des-state-equal (s w)
+(defunbc aeps-state-equal (s w)
   :input-contract t
   (or (equal s w)
-      (and (des-statep s)
-           (des-statep w)
-           (equal (des-state-tm s)
-                  (des-state-tm w))
-           (set-equiv (des-state-mem s)
-                      (des-state-mem w))
-           (set-equiv (des-state-tevs s)
-                      (des-state-tevs w)))))
+      (and (aeps-statep s)
+           (aeps-statep w)
+           (equal (aeps-state-tm s)
+                  (aeps-state-tm w))
+           (set-equiv (aeps-state-mem s)
+                      (aeps-state-mem w))
+           (set-equiv (aeps-state-tevs s)
+                      (aeps-state-tevs w)))))
 
 (defunbc valid-lo-tes (tevs time)
   "Checks if the list of timed events is valid: all events in tevs are
@@ -53,11 +53,11 @@
   (reduce* and t
            (map* (lambda (te tm) (>= (timed-event-tm te) tm)) tevs time)))
 
-;; The execution of an event is modeled as an uninterpreted function
-;; . It takes the current time and the current memory as
-;; input and returns an updated memory and a list of new events that
-;; are scheduled to be executed at some time > tm. The new events are
-;; added into Sch.
+;;The execution of an event is modeled as an uninterpreted functions.
+;;It takes the current time and the current memory as input and
+;;returns an updated memory and a list of new events that are
+;;scheduled to be executed at some time > tm. The new events are added
+;;into Sch.
 
 (encapsulate
  (((step-events-add * * *) => *)
@@ -112,15 +112,15 @@
                        (step-memory ev tm mem-equiv))))
  )
 
-(defunbc spec-transp (w v)
-  "transition relation of DES"
-  :input-contract (and (des-statep w) (des-statep v))
-  (let ((w-tm (des-state-tm w))
-        (w-tevs (des-state-tevs w))
-        (w-mem (des-state-mem w)))
+(defunbc aeps-transp (w v)
+  "transition relation of AEPS"
+  :input-contract (and (aeps-statep w) (aeps-statep v))
+  (let ((w-tm (aeps-state-tm w))
+        (w-tevs (aeps-state-tevs w))
+        (w-mem (aeps-state-mem w)))
     (if (not (events-at-tm w-tevs w-tm))
-        (des-state-equal v (des-state (1+ w-tm) w-tevs w-mem))
-      (spec-ev-transp w v))))
+        (aeps-state-equal v (aeps-state (1+ w-tm) w-tevs w-mem))
+      (aeps-ev-transp w v))))
 
 (defunc events-at-tm (tevs tm)
   "Returns the sublist of timed-events in tevs that are scheduled 
@@ -132,10 +132,10 @@
 
 ;; PETE: This should work. Use executable functions if possible.
 ;; (defunbc spec-ev-transp (w v w-tevs)
-;;   :input-contract (and (des-statep w) (des-statep v) (lo-tep w-tevs))
-;;   (let ((tm (des-state-tm w))
-;;         (tevs (des-state-tevs w))
-;;         (mem (des-state-mem w)))
+;;   :input-contract (and (aeps-statep w) (aeps-statep v) (lo-tep w-tevs))
+;;   (let ((tm (aeps-state-tm w))
+;;         (tevs (aeps-state-tevs w))
+;;         (mem (aeps-state-mem w)))
 ;;     (if (endp w-tevs)
 ;;         nil
 ;;       (let* ((tev (car w-tevs))
@@ -146,14 +146,14 @@
 ;;              (new-tevs (remove-ev tevs tev))
 ;;              (new-tevs (append new-evs new-tevs)))
 ;;         (or (and (equal etm tm)
-;;                  (des-state-equal v (des-state tm new-tevs new-mem)))
-;;             (spec-ev-transp (des-state tm (cdr tevs) mem) v))))))
+;;                  (aeps-state-equal v (aeps-state tm new-tevs new-mem)))
+;;             (spec-ev-transp (aeps-state tm (cdr tevs) mem) v))))))
 
 ;; (defunbc spec-ev-transp (w v)
-;;   :input-contract (and (des-statep w) (des-statep v))
-;;   (let ((tm (des-state-tm w))
-;;         (tevs (des-state-tevs w))
-;;         (mem (des-state-mem w)))
+;;   :input-contract (and (aeps-statep w) (aeps-statep v))
+;;   (let ((tm (aeps-state-tm w))
+;;         (tevs (aeps-state-tevs w))
+;;         (mem (aeps-state-mem w)))
 ;;     (if (endp tevs)
 ;;         nil
 ;;       (let* ((tev (car tevs))
@@ -164,14 +164,14 @@
 ;;              (new-tevs (remove-ev tevs tev))
 ;;              (new-tevs (append new-evs new-tevs)))
 ;;         (or (and (equal etm tm)
-;;                  (des-state-equal v (des-state tm new-tevs new-mem)))
-;;             (spec-ev-transp (des-state tm (cdr tevs) mem) v))))))
+;;                  (aeps-state-equal v (aeps-state tm new-tevs new-mem)))
+;;             (spec-ev-transp (aeps-state tm (cdr tevs) mem) v))))))
 
-(defun-sk spec-ev-transp (w v)
+(defun-sk aeps-ev-transp (w v)
   (exists tev
-    (let ((tm (des-state-tm w))
-          (tevs (des-state-tevs w))
-          (mem (des-state-mem w)))
+    (let ((tm (aeps-state-tm w))
+          (tevs (aeps-state-tevs w))
+          (mem (aeps-state-mem w)))
       (and (timed-eventp tev)
            (equal (timed-event-tm tev) tm)
            (member-equal tev tevs)
@@ -181,7 +181,7 @@
                   (new-mem (step-memory ev tm mem))
                   (new-tevs (remove-tevs rm-tevs (remove-tev tev tevs)))
                   (new-tevs (append new-tevs add-tevs)))
-             (des-state-equal v (des-state tm new-tevs new-mem)))))))
+             (aeps-state-equal v (aeps-state tm new-tevs new-mem)))))))
 
 (defunc remove-tev (tev tevs)
   "Removes all occurrences of tev in tevs"
@@ -199,7 +199,7 @@
 
 ;; Optimized Discrete-Event Simulation System
 (defunbc o-lo-tep (l)
-  "An OptDES schedule recognizer"
+  "An PEPS schedule recognizer"
   :input-contract t
   (and (lo-tep l)
        (ordered-lo-tep l)))
@@ -227,22 +227,22 @@
   :input-contract (and (eventp e1) (eventp e2))
   (and (string< e1 e2) t))
 
-;; State of OptDES consists of the current time, the ordered list of
+;; State of PEPS consists of the current time, the ordered list of
 ;; timed-events to execute and the memory.
-(defdata odes-state
+(defdata peps-state
   (record (tm . time)
           (otevs . o-lo-te)
           (mem . memory)))
 
-(defunc odes-transf (s)
+(defunc peps-transf (s)
   "transition function for the implementation"
-  :input-contract (odes-statep s)
-  :output-contract (odes-statep (odes-transf s))
-  (let ((tm (odes-state-tm s))
-        (otevs (odes-state-otevs s))
-        (mem (odes-state-mem s)))
+  :input-contract (peps-statep s)
+  :output-contract (peps-statep (peps-transf s))
+  (let ((tm (peps-state-tm s))
+        (otevs (peps-state-otevs s))
+        (mem (peps-state-mem s)))
     (if (endp otevs)
-        (odes-state (1+ tm) otevs mem)
+        (peps-state (1+ tm) otevs mem)
       (b* ((tev (car otevs))
            (ev (timed-event-ev tev))
            (et (timed-event-tm tev))
@@ -253,7 +253,7 @@
            (new-otevs (remove-tevs rm-tevs new-otevs))
            (new-otevs (insert-otevs add-tevs new-otevs))
            (new-tm (timed-event-tm tev)))
-        (odes-state new-tm new-otevs new-mem)))))
+        (peps-state new-tm new-otevs new-mem)))))
 
 (defunc insert-otevs (l otevs)
   "Insert timed-events in l in otevs"
@@ -276,22 +276,22 @@
           (t (cons (car otevs) (insert-tev tev (cdr otevs)))))))
 
 
-;; We show OptDES refines DES as follows:
+;; We show PEPS refines AEPS as follows:
 
-;; 1. We first define HoptDES, a machine obtained by augmenting a
-;; state of OptDES with a history component.
+;; 1. We first define HPEPS, a machine obtained by augmenting a
+;; state of PEPS with a history component.
 
-;; 2. Next we show that OptDES refines HoptDES 
+;; 2. Next we show that PEPS refines HPEPS 
 
-;; 3. Finally we show that HoptDES refines DES.
+;; 3. Finally we show that HPEPS refines AEPS.
 
 ;; We then appeal to the transitivity property of skipping refinement to
-;; infer that OptDES refines DES. 
+;; infer that PEPS refines AEPS. 
 
 
-;; Step 1: Define HoptDES
+;; Step 1: Define HPEPS
 
-;; A state of the HoptDES consists of the current time, the ordered
+;; A state of the HPEPS consists of the current time, the ordered
 ;; list of timed-events to execute, the memory, and the history
 ;; component.
 
@@ -309,13 +309,13 @@
           (otevs . o-lo-te)
           (mem . memory)))
 
-;; The transition function of HoptDES is obtained by modifying
-;; odes-transf, the transition function of OptDES such that the
+;; The transition function of HPEPS is obtained by modifying
+;; PEPS-transf, the transition function of PEPS such that the
 ;; history component of the state records the past information.
-(defunc hodes-transf (s)
-  "transition function for HoptDES"
+(defunc hpeps-transf (s)
+  "transition function for HPEPS"
   :input-contract (hstatep s)
-  :output-contract (hstatep (hodes-transf s))
+  :output-contract (hstatep (hpeps-transf s))
   (let* ((tm (hstate-tm s))
          (otevs (hstate-otevs s))
          (mem (hstate-mem s))
@@ -334,13 +334,13 @@
              (new-tm (timed-event-tm tev)))
         (hstate new-tm new-otevs new-mem hist)))))
 
-;; OptDES refines HoptDES under the refinement map P
+;; PEPS refines HPEPS under the refinement map P
 (defunc P (s)
-  :input-contract (odes-statep s)
+  :input-contract (peps-statep s)
   :output-contract (hstatep (P s))
-  (let ((tm (odes-state-tm s))
-        (otevs (odes-state-otevs s))
-        (mem (odes-state-mem s)))
+  (let ((tm (peps-state-tm s))
+        (otevs (peps-state-otevs s))
+        (mem (peps-state-mem s)))
     (hstate tm otevs mem (history nil 0 nil nil))))
 
 ;; We provide as witness a binary relation A and show that it is a
@@ -353,44 +353,42 @@
    (booleanp (A x y)))
  )
 
-;; Step 2: To show that OptDES refines HoptDES under the refinement
-;; map P we first show that the refinement map P agrees with A.
+;; Step 2: To show that PEPS refines HPEPS under the refinement
+;; map P we first show that the A agrees with the refinement map P
 
 (defthm P-good
-  (implies (good-odes-statep s)
+  (implies (good-peps-statep s)
            (A s (P s))))
 
-;; Next we show that A is a LWFSK on the disjoint union of HoptDES and
-;; OptDES. Since both machines neither stutter or skip with respect to
-;; each other, we ignore defining rankt and C. Also since both
-;; machines are deterministic we have simplified the theorem by
-;; dropping the existential quantifier in LWFSK2a . We can show that
-;; there is a simulation relation between OptDES and
-;; HoptDES. However, showing that A is a LWFSK suffices for our
-;; purpose.
+;; Next we show that A is a RWFSK on the disjoint union of HPEPS and
+;; PEPS. Since both machines do not stutter we ignore rankt. Also
+;; since both machines are deterministic we have simplified the
+;; theorem by dropping the existential quantifier in RWFSK2b . We can
+;; show that there is a simulation relation between PEPS and
+;; HPEPS. However, showing that A is an SKS suffices for our purpose.
 
-(defthm A-is-a-simulation
+(defthm A-is-a-RWFSK
   (implies (A s w)
-           (A (odes-transf s)
-              (hodes-transf w))))
+           (A (peps-transf s)
+              (hpeps-transf w))))
 
-(defthm good-odes-inductive
-  (implies (good-odes-statep s)
-           (good-odes-statep (odes-transf s))))
+(defthm good-peps-inductive
+  (implies (good-peps-statep s)
+           (good-peps-statep (peps-transf s))))
 
 (defthm good-hstate-inductive
   (implies (good-hstatep s)
-           (good-hstatep (hodes-transf s))))
+           (good-hstatep (hpeps-transf s))))
 
 
-;; A state of OptDES is good if it has a valid list of timed-events.
-(defunbc good-odes-statep (s)
-  "good odes state recognizer"
+;; A state of PEPS is good if it has a valid list of timed-events.
+(defunbc good-peps-statep (s)
+  "good peps state recognizer"
   :input-contract t
-  (and (odes-statep s)
-       (valid-lo-tes (odes-state-otevs s) (odes-state-tm s))))
+  (and (peps-statep s)
+       (valid-lo-tes (peps-state-otevs s) (peps-state-tm s))))
 
-;; A state of HoptDES is good if it has a valid list of timed-events
+;; A state of HPEPS is good if it has a valid list of timed-events
 ;; and the history is good.
 (defunbc good-hstatep (s)
   :input-contract t
@@ -412,7 +410,7 @@
          (h-mem (history-mem hist))
          (hst (hstate h-tm h-otevs h-mem
                       (history nil 0 nil nil)))
-         (sh (hodes-transf hst)))
+         (sh (hpeps-transf hst)))
     (implies h-valid
              (and (hstate-equal sh s)
                   (valid-lo-tevs h-otevs (hstate-tm s))))))
@@ -445,40 +443,40 @@
              (not (history-valid (hstate-h w)))))))
 
 
-;; Step 3: Next we show that HoptDES refines DES under the refinement
+;; Step 3: Next we show that HPEPS refines AEPS under the refinement
 ;; map R
 (defunc R (s)
-  "A refinement map from an OptDES state to a DES state"
+  "A refinement map from an PEPS state to a AEPS state"
   :input-contract (hstatep s)
-  :output-contract (des-statep (R s))
-  (des-state (hstate-tm s) (hstate-otevs s) (hstate-mem s)))
+  :output-contract (aeps-statep (R s))
+  (aeps-state (hstate-tm s) (hstate-otevs s) (hstate-mem s)))
 
 ;; We provide as witness a binary relation B and show that it is an
 ;; SKS relation.
 
 (encapsulate
- ;;"SKS relation between an OptDES state and a DES state"
+ ;;"SKS relation between an PEPS state and a AEPS state"
  ((B (x y) t))
  
  (defthm B-is-a-binary-relation
    (booleanp (B x y)))
  )
 
-;; First we show that the refinement map R agrees with B.
+;; First we show that the B agrees with the refinement map R
 (defthm R-good
   (implies (good-hstatep s)
            (B s (R s))))
 
-;; Next we show that B is an LWFSK on the disjoing union of HoptDES
-;; and DES. Since both machines do not stutter, we ignore rankt. We
-;; define as witness a binary relation C and rankls that satisfy
-;; LWFSK2.
+;; Next we show that B is an RLWFSK on the disjoinT union of HPEPS and
+;; AEPS. Since both machines do not stutter, we ignore rankt. We
+;; define as witness a binary relation O and rankls that satisfy
+;; RLWFSK2.
 
 (encapsulate
- ((C (x y) t)
+ ((O (x y) t)
   (rankls (y x) t))
 
- (local (defun C (x y)
+ (local (defun O (x y)
           (declare (ignore x y))
           t))
 
@@ -486,37 +484,31 @@
           (declare (ignore x y))
           0))
  
- (defthm C-is-a-binary-relation
+ (defthm O-is-a-binary-relation
    (booleanp (C x y)))
 
  (defthm rankls-contract
-   (implies (and (des-statep y) (hstatep x))
+   (implies (and (aeps-statep y) (hstatep x))
             (natp (rankls y x))))
  )
 
-;; Next we show that B is an LWFSK.
-(defthm B-is-a-LWFSK
+;; Next we show that B is an RLWFSK.
+(defthm B-is-an-RLWFSK
   (implies (B s w)
-           (or (lwfsk2a (hodes-transf s) w)
-               (lwfsk2d (hodes-transf s) w))))
+           (rlwfsk2b (hpeps-transf s) w)))
 
-(defun-sk lwfsk2a (u w)
+(defun-sk rlwfsk2b (u w)
   (exists v
-    (and (spec-transp w v)
-         (B u v))))
+    (and (aeps-transp w v)
+         (O u v))))
 
-(defun-sk lwfsk2d (u w)
-  (exists v
-    (and (spec-transp w v)
-         (C u v))))
-
-(defthm C-is-good
-  (implies (and (C x y)
+(defthm O-is-good
+  (implies (and (O x y)
                 (not (B x y)))
-           (lwfsk2f x y)))
+           (rlwfsk2c x y)))
 
-(defun-sk lwfsk2f (x y)
+(defun-sk rlwfsk2c (x y)
   (exists z
-    (and (spec-transp y z)
-         (C x z)
+    (and (aeps-transp y z)
+         (O x z)
          (< (rankls z x) (rankls y x)))))

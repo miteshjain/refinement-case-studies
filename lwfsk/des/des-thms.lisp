@@ -3,7 +3,7 @@
 (include-book "defunbc" :ttags :all)
 (include-book "higher-order" :ttags :all)
 
-;; Data definitions for DES, a Discrete-Event Simulation system
+;; Data definitions for AEPS, a Discrete-Event Simulation system
 
 ;; Time is an integer
 (defdata time nat)
@@ -16,15 +16,15 @@
   (record (tm . time)
           (ev . event)))
 
-;; A list of timed-events
+;; A multiset of timed-events
 (defdata lo-te (listof timed-event))
 
-;; A memory maps a global variable (var) to a value (integer)
+;; A memory is a collection of global variable (var) and integer pair
 (defdata memory (alistof var integer))
 
-;; A state of the DES consists of the current time, the list of
+;; A state of the AEPS consists of the current time, the list of
 ;; timed-events to execute and the memory.
-(defdata des-state
+(defdata aeps-state
   (record (tm . time)
           (tevs . lo-te)
           (mem . memory)))
@@ -35,26 +35,26 @@
 
 (add-macro-fn set-equiv acl2::set-equiv)
 
-;; The definition of des-state equality. The timed events are a set,
+;; The definition of aeps-state equality. The timed events are a set,
 ;; so we have to compare them using set equality. The memory is also a
 ;; set of variable, value pairs, so we also treat it as a set.
-(defunbc des-state-equal (s w)
+(defunbc aeps-state-equal (s w)
   :input-contract t
   (or (equal s w)
-      (and (des-statep s)
-           (des-statep w)
-           (equal (des-state-tm s)
-                  (des-state-tm w))
-           (set-equiv (des-state-mem s)
-                      (des-state-mem w))
-           (set-equiv (des-state-tevs s)
-                      (des-state-tevs w)))))
+      (and (aeps-statep s)
+           (aeps-statep w)
+           (equal (aeps-state-tm s)
+                  (aeps-state-tm w))
+           (set-equiv (aeps-state-mem s)
+                      (aeps-state-mem w))
+           (set-equiv (aeps-state-tevs s)
+                      (aeps-state-tevs w)))))
 
-(defequiv des-state-equal)
+(defequiv aeps-state-equal)
 
-(defcong des-state-equal equal (des-state-tm x) 1)
-(defcong des-state-equal set-equiv (des-state-tevs x) 1)
-(defcong des-state-equal set-equiv (des-state-mem x) 1)
+(defcong aeps-state-equal equal (aeps-state-tm x) 1)
+(defcong aeps-state-equal set-equiv (aeps-state-tevs x) 1)
+(defcong aeps-state-equal set-equiv (aeps-state-mem x) 1)
 
 (defdata lob (listof boolean))
 (create-reduce* and booleanp lobp)
@@ -229,14 +229,14 @@
     (remove-tev (car l) (remove-tevs (cdr l) tevs))))
 
 (in-theory
- (disable des-state des-statep des-state-tm
-          des-state-tevs des-state-mem))
+ (disable aeps-state aeps-statep aeps-state-tm
+          aeps-state-tevs aeps-state-mem))
 
-(defun-sk spec-ev-transp (w v)
+(defun-sk aeps-ev-transp (w v)
   (exists tev
-    (let ((tm (des-state-tm w))
-          (tevs (des-state-tevs w))
-          (mem (des-state-mem w)))
+    (let ((tm (aeps-state-tm w))
+          (tevs (aeps-state-tevs w))
+          (mem (aeps-state-mem w)))
       (and (timed-eventp tev)
            (equal (timed-event-tm tev) tm)
            (member-equal tev tevs)
@@ -246,26 +246,26 @@
                   (new-mem (step-memory ev tm mem))
                   (new-tevs (remove-tevs rm-tevs (remove-tev tev tevs)))
                   (new-tevs (append new-tevs add-tevs)))
-             (des-state-equal v (des-state tm new-tevs new-mem))))))
-  :witness-dcls ((declare (xargs :guard (and (des-statep w) (des-statep v))
+             (aeps-state-equal v (aeps-state tm new-tevs new-mem))))))
+  :witness-dcls ((declare (xargs :guard (and (aeps-statep w) (aeps-statep v))
                                  :verify-guards nil))))
 
-(verify-guards spec-ev-transp
+(verify-guards aeps-ev-transp
                :hints (("goal" :in-theory (disable (:definition timed-event-ev)
                                                    (:definition timed-event-tm)))))
 
-(defunbc spec-transp (w v)
-  "transition relation of DES"
-  :input-contract (and (des-statep w) (des-statep v))
-  (let ((w-tm (des-state-tm w))
-        (w-tevs (des-state-tevs w))
-        (w-mem (des-state-mem w)))
+(defunbc aeps-transp (w v)
+  "transition relation of AEPS"
+  :input-contract (and (aeps-statep w) (aeps-statep v))
+  (let ((w-tm (aeps-state-tm w))
+        (w-tevs (aeps-state-tevs w))
+        (w-mem (aeps-state-mem w)))
     (if (not (events-at-tm w-tevs w-tm))
-        (des-state-equal v (des-state (1+ w-tm) w-tevs w-mem))
-      (spec-ev-transp w v))))
+        (aeps-state-equal v (aeps-state (1+ w-tm) w-tevs w-mem))
+      (aeps-ev-transp w v))))
 
 
-;; OptDES
+;; PEPS
 
 (defunbc event-< (e1 e2)
   :input-contract (and (eventp e1) (eventp e2))
@@ -315,7 +315,7 @@
                 (ordered-lo-tep (cdr l))))))
 
 (defunbc o-lo-tep (l)
-  "An OptDES schedule recognizer"
+  "An OptAEPS schedule recognizer"
   :input-contract t
   (and (lo-tep l)
        (ordered-lo-tep l)))
@@ -359,28 +359,28 @@
             (lo-tep l))
    :rule-classes (:rewrite :forward-chaining))
 
-;; State of OptDES
-(defdata odes-state
+;; State of OptAEPS
+(defdata peps-state
   (record (tm . time)
           (otevs . o-lo-te)
           (mem . memory)))
 
-(defunbc odes-state-equal (s w)
+(defunbc peps-state-equal (s w)
   :input-contract t
   (or (equal s w)
-      (and (odes-statep s)
-           (odes-statep w)
-           (equal (odes-state-tm s)
-                  (odes-state-tm w))
-           (equal (odes-state-otevs s)
-                  (odes-state-otevs w))
-           (set-equiv (odes-state-mem s)
-                            (odes-state-mem w)))))
+      (and (peps-statep s)
+           (peps-statep w)
+           (equal (peps-state-tm s)
+                  (peps-state-tm w))
+           (equal (peps-state-otevs s)
+                  (peps-state-otevs w))
+           (set-equiv (peps-state-mem s)
+                            (peps-state-mem w)))))
 
-(defequiv odes-state-equal)
+(defequiv peps-state-equal)
 
-(in-theory (disable timep o-lo-tep-definition-rule odes-state
-                    odes-state-otevs odes-state-tm odes-state-mem
+(in-theory (disable timep o-lo-tep-definition-rule peps-state
+                    peps-state-otevs peps-state-tm peps-state-mem
                     timed-event-ev timed-event-tm))
 
 
@@ -413,15 +413,15 @@
  )
   
   
-(defunc odes-transf (s)
+(defunc peps-transf (s)
   "transition function for the implementation"
-  :input-contract (odes-statep s)
-  :output-contract (odes-statep (odes-transf s))
-  (let ((tm (odes-state-tm s))
-        (otevs (odes-state-otevs s))
-        (mem (odes-state-mem s)))
+  :input-contract (peps-statep s)
+  :output-contract (peps-statep (peps-transf s))
+  (let ((tm (peps-state-tm s))
+        (otevs (peps-state-otevs s))
+        (mem (peps-state-mem s)))
     (if (endp otevs)
-        (odes-state (1+ tm) otevs mem)
+        (peps-state (1+ tm) otevs mem)
       (b* ((tev (car otevs))
            (ev (timed-event-ev tev))
            (et (timed-event-tm tev))
@@ -432,12 +432,12 @@
            (new-otevs (remove-tevs rm-tevs new-otevs))
            (new-otevs (insert-otevs add-tevs new-otevs))
            (new-tm (timed-event-tm tev)))
-        (odes-state new-tm new-otevs new-mem)))))
+        (peps-state new-tm new-otevs new-mem)))))
 
-;; We next describe an HoptDES machine obtained by augumenting a state
-;; of OptDES machine with a history component. The transition function
-;; of HoptDES is defined by modifying the transition function of
-;; OptDES such that the history variable records the past information.
+;; We next aepscribe an HPEPS machine obtained by augumenting a state
+;; of OptAEPS machine with a history component. The transition function
+;; of HPEPS is defined by modifying the transition function of
+;; OptAEPS such that the history variable records the past information.
 
 (defdata history
   (record (valid . boolean)
@@ -479,12 +479,12 @@
 
 (in-theory (disable hstate hstate-otevs hstate-tm hstate-mem hstate-h
                    history history-valid history-otevs history-mem
-                   history-tm des-state))
+                   history-tm aeps-state))
 
-(defunc hodes-transf (s)
-  "transition function for HoptDES"
+(defunc hpeps-transf (s)
+  "transition function for HPEPS"
   :input-contract (hstatep s)
-  :output-contract (hstatep (hodes-transf s))
+  :output-contract (hstatep (hpeps-transf s))
   (let* ((tm (hstate-tm s))
          (otevs (hstate-otevs s))
          (mem (hstate-mem s))
@@ -504,20 +504,20 @@
         (hstate new-tm new-otevs new-mem hist)))))
 
 
-;; OptDES refines HoptDES under the refinement map P
+;; OptAEPS refines HPEPS under the refinement map P
 (defunc P (s)
-  :input-contract (odes-statep s)
+  :input-contract (peps-statep s)
   :output-contract (hstatep (P s))
-  (let ((tm (odes-state-tm s))
-        (otevs (odes-state-otevs s))
-        (mem (odes-state-mem s)))
+  (let ((tm (peps-state-tm s))
+        (otevs (peps-state-otevs s))
+        (mem (peps-state-mem s)))
     (hstate tm otevs mem (history nil 0 nil nil))))
 
-(defunbc good-odes-statep (s)
-  "good odes state recognizer"
+(defunbc good-peps-statep (s)
+  "good peps state recognizer"
   :input-contract t
-  (and (odes-statep s)
-       (valid-lo-tevs (odes-state-otevs s) (odes-state-tm s))))
+  (and (peps-statep s)
+       (valid-lo-tevs (peps-state-otevs s) (peps-state-tm s))))
 
 (defunbc good-histp (s)
   "Checks if the history component of an Hstate is good"
@@ -529,7 +529,7 @@
          (h-mem (history-mem hist))
          (hst (hstate h-tm h-otevs h-mem
                       (history nil 0 nil nil)))
-         (sh (hodes-transf hst)))
+         (sh (hpeps-transf hst)))
     (implies h-valid
              (and (hstate-equal sh s)
                   (valid-lo-tevs h-otevs (hstate-tm s))))))
@@ -546,9 +546,9 @@
   :rule-classes (:rewrite :forward-chaining))
 
 (defunbc A (s w)
-  "SKS/STS relation between OptDES and HoptDES"
+  "SKS/STS relation between OptAEPS and HPEPS"
   :input-contract t
-  (and (good-odes-statep s)
+  (and (good-peps-statep s)
        (good-hstatep w)
        (let* ((ps (P s))
               (ps-tm (hstate-tm ps))
@@ -562,7 +562,7 @@
               (set-equiv ps-mem w-mem)))))
 
 (defthm P-good
-  (implies (good-odes-statep s)
+  (implies (good-peps-statep s)
            (A s (P s))))
 
 (defthm no-events-at-tm-top-of-queue-1
@@ -803,14 +803,14 @@
                    (valid-lo-tevs (remove-tevs l1 l) tm))
           :hints (("Goal" :in-theory (enable valid-lo-tevs-definition-rule))))
               
-  (defthm good-odes-inductive
-    (implies (good-odes-statep s)
-             (good-odes-statep (odes-transf s)))
+  (defthm good-peps-inductive
+    (implies (good-peps-statep s)
+             (good-peps-statep (peps-transf s)))
     :rule-classes (:forward-chaining :rewrite))
 
   (defthm good-hstate-inductive
     (implies (good-hstatep s)
-             (good-hstatep (hodes-transf s)))
+             (good-hstatep (hpeps-transf s)))
     :hints (("Goal" :in-theory (disable
                                 no-events-at-tm-top-of-queue-1
                                 no-events-at-tm-top-of-queue-2)))
@@ -929,10 +929,10 @@
             
  ;; Not sure if it is useful here and/or there might be a better place for
  ;; this congruence relation
- ;; (defthm hodes-transf-congruence
+ ;; (defthm hpeps-transf-congruence
  ;;   (implies (hstate-equal s w)
- ;;            (hstate-equal (hodes-transf s)
- ;;                          (hodes-transf w)))
+ ;;            (hstate-equal (hpeps-transf s)
+ ;;                          (hpeps-transf w)))
  ;;   :hints (("goal" :in-theory (disable insert-otevs-l-equiv-is-equal)
  ;;            :use ((:instance step-events-add-congruence
  ;;                             (ev (timed-event-ev (car (hstate-otevs s))))
@@ -956,54 +956,54 @@
  
  (local (defthm A-proof-1
           (implies (and (A s w)
-                        (good-hstatep (hodes-transf w))
-                        (good-odes-statep (odes-transf s)))                
-                   (A (odes-transf s)
-                      (hodes-transf w)))
-          :hints (("Goal" :in-theory (disable good-odes-statep good-hstatep
+                        (good-hstatep (hpeps-transf w))
+                        (good-peps-statep (peps-transf s)))                
+                   (A (peps-transf s)
+                      (hpeps-transf w)))
+          :hints (("Goal" :in-theory (disable good-peps-statep good-hstatep
                                               good-hstate-inductive
-                                              good-odes-inductive
+                                              good-peps-inductive
                                               valid-lo-tevs->=-tm
                                               no-events-at-tm-top-of-queue-1
                                               no-events-at-tm-top-of-queue-2)
                    :use ((:instance step-events-add-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance step-events-rm-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance step-memory-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))))
                   ("Subgoal 3'"
                    :use ((:instance step-events-add-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance step-events-rm-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance remove-tevs-l-equiv-is-set-equiv
                                     (tevs (cdr (hstate-otevs w)))
                                     (l (step-events-rm (timed-event-ev (car (hstate-otevs w)))
                                                        (timed-event-tm (car (hstate-otevs w)))
-                                                       (odes-state-mem s)))
+                                                       (peps-state-mem s)))
                                     (l-equiv  (step-events-rm (timed-event-ev (car (hstate-otevs w)))
                                                               (timed-event-tm (car (hstate-otevs w)))
                                                               (hstate-mem w))))
                          (:instance insert-otevs-l-equiv-is-equal-1
                                     (otevs (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                                         (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
-                                                                        (ODES-STATE-MEM S))
+                                                                        (PEPS-STATE-MEM S))
                                                         (CDR (HSTATE-OTEVS W))))
                                     (otevs-equiv (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                                               (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
@@ -1011,7 +1011,7 @@
                                                               (CDR (HSTATE-OTEVS W))))
                                     (l (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                     (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
-                                                    (ODES-STATE-MEM S)))
+                                                    (PEPS-STATE-MEM S)))
                                     (l-equiv (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                           (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                           (HSTATE-MEM W)))))
@@ -1020,25 +1020,25 @@
                    :use ((:instance step-events-add-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance step-events-rm-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance remove-tevs-l-equiv-is-set-equiv
                                     (tevs (cdr (hstate-otevs w)))
                                     (l (step-events-rm (timed-event-ev (car (hstate-otevs w)))
                                                        (timed-event-tm (car (hstate-otevs w)))
-                                                       (odes-state-mem s)))
+                                                       (peps-state-mem s)))
                                     (l-equiv  (step-events-rm (timed-event-ev (car (hstate-otevs w)))
                                                               (timed-event-tm (car (hstate-otevs w)))
                                                               (hstate-mem w))))
                          (:instance insert-otevs-l-equiv-is-equal-1
                                     (otevs (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                                         (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
-                                                                        (ODES-STATE-MEM S))
+                                                                        (PEPS-STATE-MEM S))
                                                         (CDR (HSTATE-OTEVS W))))
                                     (otevs-equiv (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                                               (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
@@ -1046,7 +1046,7 @@
                                                               (CDR (HSTATE-OTEVS W))))
                                     (l (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                     (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
-                                                    (ODES-STATE-MEM S)))
+                                                    (PEPS-STATE-MEM S)))
                                     (l-equiv (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                           (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                           (HSTATE-MEM W)))))
@@ -1055,25 +1055,25 @@
                    :use ((:instance step-events-add-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance step-events-rm-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W))))
                                     (tm (TIMED-EVENT-tm (CAR (HSTATE-OTEVS W))))
-                                    (mem-equiv (ODES-STATE-MEM S))
+                                    (mem-equiv (PEPS-STATE-MEM S))
                                     (mem (HSTATE-MEM W)))
                          (:instance remove-tevs-l-equiv-is-set-equiv
                                     (tevs (cdr (hstate-otevs w)))
                                     (l (step-events-rm (timed-event-ev (car (hstate-otevs w)))
                                                        (timed-event-tm (car (hstate-otevs w)))
-                                                       (odes-state-mem s)))
+                                                       (peps-state-mem s)))
                                     (l-equiv  (step-events-rm (timed-event-ev (car (hstate-otevs w)))
                                                               (timed-event-tm (car (hstate-otevs w)))
                                                               (hstate-mem w))))
                          (:instance insert-otevs-l-equiv-is-equal-1
                                     (otevs (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                                         (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
-                                                                        (ODES-STATE-MEM S))
+                                                                        (PEPS-STATE-MEM S))
                                                         (CDR (HSTATE-OTEVS W))))
                                     (otevs-equiv (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                                               (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
@@ -1081,7 +1081,7 @@
                                                               (CDR (HSTATE-OTEVS W))))
                                     (l (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                     (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
-                                                    (ODES-STATE-MEM S)))
+                                                    (PEPS-STATE-MEM S)))
                                     (l-equiv (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS W)))
                                                           (TIMED-EVENT-TM (CAR (HSTATE-OTEVS W)))
                                                           (HSTATE-MEM W)))))
@@ -1089,51 +1089,51 @@
 
  (local (defthm A-implies-good-states
           (implies (A s w)
-                   (and (good-odes-statep s)
+                   (and (good-peps-statep s)
                         (good-hstatep w)))
           :hints (("Goal" :in-theory (disable p-definition-rule
                                               good-hstatep-definition-rule
-                                              good-odes-statep-definition-rule)))))
+                                              good-peps-statep-definition-rule)))))
  
- (defthmd A-is-a-simulation
+ (defthmd A-is-a-RWFSK
    (implies (and (A s w))
-            (A (odes-transf s)
-               (hodes-transf w)))
+            (A (peps-transf s)
+               (hpeps-transf w)))
    :hints (("Goal" :in-theory (disable A-definition-rule
-                                       hodes-transf-definition-rule
-                                       good-odes-statep-definition-rule
+                                       hpeps-transf-definition-rule
+                                       good-peps-statep-definition-rule
                                        good-hstatep-definition-rule))))
 
  )
 
-;; HoptDES refines DES
+;; HPEPS refines AEPS
 
 (defunc R (s)
-  "A refinement map from an OptDES state to a DES state"
+  "A refinement map from an HPEPS state to a AEPS state"
   :input-contract (hstatep s)
-  :output-contract (des-statep (R s))
-  (des-state (hstate-tm s) (hstate-otevs s) (hstate-mem s)))
+  :output-contract (aeps-statep (R s))
+  (aeps-state (hstate-tm s) (hstate-otevs s) (hstate-mem s)))
 
-(defunbc good-des-statep (s)
+(defunbc good-aeps-statep (s)
   :input-contract t
-  (and (des-statep s)
-       (valid-lo-tevs (des-state-tevs s) (des-state-tm s))))
+  (and (aeps-statep s)
+       (valid-lo-tevs (aeps-state-tevs s) (aeps-state-tm s))))
 
-(defthm good-des-state-is-des-state-fw
-  (implies (good-des-statep x)
-           (des-statep x))
+(defthm good-aeps-state-is-aeps-state-fw
+  (implies (good-aeps-statep x)
+           (aeps-statep x))
   :rule-classes (:rewrite :forward-chaining))
 
 (defunbc B (s w)
-  "SKS relation between an OptDES state and a DES state"
+  "SKS relation between an OptAEPS state and a AEPS state"
   :input-contract t
   (and (good-hstatep s)
-       (good-des-statep w)
-       (des-state-equal (R s) w)))
+       (good-aeps-statep w)
+       (aeps-state-equal (R s) w)))
 
 (defthm B-implies-good-states
   (implies (B s w)
-           (and (good-hstatep s) (good-des-statep w)))
+           (and (good-hstatep s) (good-aeps-statep w)))
   :rule-classes (:forward-chaining))
 
 (defthm R-good
@@ -1141,36 +1141,36 @@
            (B s (R s))))
 
 ;; Not sure if it will be useful
-(defcong hstate-equal des-state-equal (R x) 1)
+(defcong hstate-equal aeps-state-equal (R x) 1)
 
 ;; LWFSK witness
 
-(defunbc C (x y)
+(defunbc O (x y)
   :input-contract t
   (and (good-hstatep x)
-       (good-des-statep y)
+       (good-aeps-statep y)
        (or (B x y)
            (and (history-valid (hstate-h x))
                 (consp (history-otevs (hstate-h x)))
-                (<= (des-state-tm y) (hstate-tm x))
-                (set-equiv (des-state-tevs y)
+                (<= (aeps-state-tm y) (hstate-tm x))
+                (set-equiv (aeps-state-tevs y)
                            (history-otevs (hstate-h x)))
-                (set-equiv (des-state-mem y)
+                (set-equiv (aeps-state-mem y)
                            (history-mem (hstate-h x)))))))
 
-(defthm C-implies-good-state-fw
-  (implies (C x y)
+(defthm O-implies-good-state-fw
+  (implies (O x y)
            (and (good-hstatep x)
-                (good-des-statep y)))
-  :hints (("Goal" :in-theory (disable good-des-statep-definition-rule
+                (good-aeps-statep y)))
+  :hints (("Goal" :in-theory (disable good-aeps-statep-definition-rule
                                       good-hstatep-definition-rule))))
 
 (defunc rankls (y x)
-  :input-contract (and (des-statep y) (hstatep x))
+  :input-contract (and (aeps-statep y) (hstatep x))
   :output-contract (natp (rankls y x))
   (nfix (- (+ (hstate-tm x)
-              (len (events-at-tm (des-state-tevs y) (hstate-tm x))))
-           (des-state-tm y))))
+              (len (events-at-tm (aeps-state-tevs y) (hstate-tm x))))
+           (aeps-state-tm y))))
 
 
 (encapsulate
@@ -1308,8 +1308,8 @@
 (encapsulate
  nil
  ;; Case when there is an event to be picked (the first one) in
- ;; HoptDES at current time. In this case , we show that (R
- ;; (hodes-transf s)) is a witness for lwfsk2a.
+ ;; HPEPS at current time. In this case , we show that (R
+ ;; (hpeps-transf s)) is a witness for lwfsk2a.
 
  (local (in-theory (disable eventp valid-lo-tevs->=-tm
                             no-events-at-tm-top-of-queue-1
@@ -1317,11 +1317,11 @@
  
  (local (defthmd lwfsk2a-B
           (implies (B s w)
-                   (B (hodes-transf s)
-                      (R (hodes-transf s))))
-          :hints (("goal" :in-theory (disable good-des-statep
+                   (B (hpeps-transf s)
+                      (R (hpeps-transf s))))
+          :hints (("goal" :in-theory (disable good-aeps-statep
                                               good-hstatep
-                                              hodes-transf
+                                              hpeps-transf
                                               r-definition-rule)
                    :use ((:instance good-hstate-inductive))))))
 
@@ -1330,94 +1330,94 @@
  (local (defthm lwfsk2a-l1-empty
           (implies (and (B s w)
                         (endp (hstate-otevs s)))
-                   (and (spec-transp w (R (hodes-transf s)))
-                        (B (hodes-transf s) (R (hodes-transf s)))))
+                   (and (aeps-transp w (R (hpeps-transf s)))
+                        (B (hpeps-transf s) (R (hpeps-transf s)))))
           :hints (("Goal" :in-theory (e/d (valid-lo-tevs-definition-rule
                                            good-histp-definition-rule) ())))))
 
 
- ;; TODO: why this intermediate lemma is needed for lwfsk2a-spec-step
+ ;; TODO: why this intermediate lemma is needed for lwfsk2a-aeps-step
  (local (defthm e1
           (implies (and (B s w)
                         (consp (hstate-otevs s))
                         (equal (hstate-tm s)
                                (timed-event-tm (car (hstate-otevs s)))))
-                   (and (equal (timed-event-tm (car (hstate-otevs s))) (des-state-tm w))
+                   (and (equal (timed-event-tm (car (hstate-otevs s))) (aeps-state-tm w))
                         (timed-eventp (car (hstate-otevs s)))
-                        (member-equal (car (hstate-otevs s)) (des-state-tevs w))
-                        (equal (hstate-tm s) (des-state-tm w))
+                        (member-equal (car (hstate-otevs s)) (aeps-state-tevs w))
+                        (equal (hstate-tm s) (aeps-state-tm w))
                         (set-equiv
                          (insert-otevs (step-events-add (timed-event-ev (car (hstate-otevs s)))
                                                         (hstate-tm s)
                                                         (hstate-mem s))
                                        (remove-tevs (step-events-rm (timed-event-ev (car (hstate-otevs s)))
-                                                                    (des-state-tm w)
+                                                                    (aeps-state-tm w)
                                                                     (hstate-mem s))
                                                     (cdr (hstate-otevs s))))
                          (append (step-events-add (timed-event-ev (car (hstate-otevs s)))
-                                              (des-state-tm w)
-                                              (des-state-mem w))
+                                              (aeps-state-tm w)
+                                              (aeps-state-mem w))
                                  (remove-tevs (step-events-rm (timed-event-ev (car (hstate-otevs s)))
-                                                              (des-state-tm w)
-                                                              (des-state-mem w))
+                                                              (aeps-state-tm w)
+                                                              (aeps-state-mem w))
                                               (remove-tev (car (hstate-otevs s))
-                                                          (des-state-tevs w)))))
+                                                          (aeps-state-tevs w)))))
                         (set-equiv (step-memory (timed-event-ev (car (hstate-otevs s)))
                                                 (hstate-tm s)
                                                 (hstate-mem s))
                                    (step-memory (timed-event-ev (car (hstate-otevs s)))
-                                                (des-state-tm w)
-                                                (des-state-mem w)))))
+                                                (aeps-state-tm w)
+                                                (aeps-state-mem w)))))
           :hints (("Subgoal 2'" :in-theory (disable step-events-add-congruence
                                                     step-events-rm-congruence
                                                     remove-tevs-l-equiv-is-set-equiv)
                    :use ((:instance step-events-add-congruence
                                     (ev (timed-event-ev (car (hstate-otevs s))))
-                                    (tm (des-state-tm w))
-                                    (mem (des-state-mem w))
+                                    (tm (aeps-state-tm w))
+                                    (mem (aeps-state-mem w))
                                     (mem-equiv (hstate-mem s)))
                          (:instance step-events-rm-congruence
                                     (ev (timed-event-ev (car (hstate-otevs s))))
-                                    (tm (des-state-tm w))
-                                    (mem (des-state-mem w))
+                                    (tm (aeps-state-tm w))
+                                    (mem (aeps-state-mem w))
                                     (mem-equiv (hstate-mem s)))
                          (:instance remove-tevs-l-equiv-is-set-equiv
                                     (tevs (cdr (hstate-otevs s)))
                                     (l (step-events-rm (timed-event-ev (car (hstate-otevs s)))
-                                                       (des-state-tm w)
-                                                       (des-state-mem w)))
+                                                       (aeps-state-tm w)
+                                                       (aeps-state-mem w)))
                                     (l-equiv (step-events-rm (timed-event-ev (car (hstate-otevs s)))
-                                                             (des-state-tm w)
+                                                             (aeps-state-tm w)
                                                              (hstate-mem s))))))
                   ("Subgoal 1'" :in-theory (disable step-memory-congruence)
                    :use ((:instance step-memory-congruence
                                     (ev (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S))))
-                                    (tm (DES-STATE-TM W))
-                                    (mem (DES-STATE-MEM W))
+                                    (tm (AEPS-STATE-TM W))
+                                    (mem (AEPS-STATE-MEM W))
                                     (mem-equiv (HSTATE-MEM S))))))))
  
 
- (local (defthm  bla
+ (local (defthmd  bla
           (implies (and 
                     (SET-EQUIV
                      (INSERT-OTEVS
                       (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
-                                       (DES-STATE-TM W)
+                                       (AEPS-STATE-TM W)
                                        (HSTATE-MEM S))
                       (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
-                                                   (DES-STATE-TM W)
+                                                   (AEPS-STATE-TM W)
                                                    (HSTATE-MEM S))
                                    (CDR (HSTATE-OTEVS S))))
                      (APPEND
                       (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
-                                       (DES-STATE-TM W)
-                                       (DES-STATE-MEM W))
+                                       (AEPS-STATE-TM W)
+                                       (AEPS-STATE-MEM W))
                       (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
-                                                   (DES-STATE-TM W)
-                                                   (DES-STATE-MEM W))
+                                                   (AEPS-STATE-TM W)
+                                                   (AEPS-STATE-MEM W))
                                    (REMOVE-TEV (CAR (HSTATE-OTEVS S))
-                                               (DES-STATE-TEVS W)))))
-                    (EQUAL (HSTATE-TM S) (DES-STATE-TM W)))
+                                               (AEPS-STATE-TEVS W)))))
+                    (EQUAL (HSTATE-TM S) (AEPS-STATE-TM W)))
 
                    (SET-EQUIV
                     (INSERT-OTEVS
@@ -1430,44 +1430,41 @@
                                   (CDR (HSTATE-OTEVS S))))
                     (APPEND
                      (REMOVE-TEVS (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
-                                                  (DES-STATE-TM W)
-                                                  (DES-STATE-MEM W))
+                                                  (AEPS-STATE-TM W)
+                                                  (AEPS-STATE-MEM W))
                                   (REMOVE-TEV (CAR (HSTATE-OTEVS S))
-                                              (DES-STATE-TEVS W)))
+                                              (AEPS-STATE-TEVS W)))
                      (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HSTATE-OTEVS S)))
-                                      (DES-STATE-TM W)
-                                      (DES-STATE-MEM W)))))))
- (local (defthmd lwfsk2a-spec-step
+                                      (AEPS-STATE-TM W)
+                                      (AEPS-STATE-MEM W)))))))
+ (local (defthmd lwfsk2a-aeps-step
           (implies (and (B s w)
                         (consp (hstate-otevs s))
                         (equal (hstate-tm s)
                                (timed-event-tm (car (hstate-otevs s)))))
-                   (spec-ev-transp w (R (hodes-transf s))))
-          :hints (("goal" :use ((:instance spec-ev-transp-suff
+                   (aeps-ev-transp w (R (hpeps-transf s))))
+          :hints (("goal" :use ((:instance aeps-ev-transp-suff
                                            (tev (car (hstate-otevs s)))
-                                           (v (R (hodes-transf s))))
+                                           (v (R (hpeps-transf s))))
                                 (:instance e1))
-                   :in-theory (disable spec-ev-transp-suff 
+                   :in-theory (disable aeps-ev-transp-suff 
                                        acl2::set-equiv-is-an-equivalence
                                        remove-tevs-l-equiv-is-set-equiv
                                        acl2::commutativity-of-append-under-set-equiv
                                        e1
-                                       spec-ev-transp))
-                  ("Subgoal 12" :use ((:instance bla))
-                   :in-theory (disable bla))
-                  ("Subgoal 11" :use ((:instance bla))
-                   :in-theory (disable bla))
-                  ("Subgoal 10" :use ((:instance bla))
-                   :in-theory (disable bla)))))
+                                       aeps-ev-transp))
+                  ("Subgoal 12" :use ((:instance bla)))
+                  ("Subgoal 11" :use ((:instance bla)))
+                  ("Subgoal 10" :use ((:instance bla))))))
  
  (local (defthm lwfsk2a-l1-cons
           (implies (and (B s w)
                         (consp (hstate-otevs s))
                         (equal (hstate-tm s)
                                (timed-event-tm (car (hstate-otevs s)))))
-                   (and (spec-ev-transp w (R (hodes-transf s)))
-                        (B (hodes-transf s) (R (hodes-transf s)))))
-          :hints (("goal" :use ((:instance lwfsk2a-spec-step)
+                   (and (aeps-ev-transp w (R (hpeps-transf s)))
+                        (B (hpeps-transf s) (R (hpeps-transf s)))))
+          :hints (("goal" :use ((:instance lwfsk2a-aeps-step)
                                 (:instance lwfsk2a-B))))))
 
  (local (defthm events-at-tm-cons
@@ -1479,12 +1476,12 @@
                         (consp (hstate-otevs s))
                         (equal (hstate-tm s)
                                (timed-event-tm (car (hstate-otevs s)))))
-                   (events-at-tm (des-state-tevs w) (des-state-tm w)))
+                   (events-at-tm (aeps-state-tevs w) (aeps-state-tm w)))
           :hints (("Goal" :in-theory (disable
                                       events-at-tm-l-set-equiv
                                       timed-event eventp)
                    :use ((:instance events-at-tm-l-set-equiv
-                                    (x (des-state-tevs w))
+                                    (x (aeps-state-tevs w))
                                     (y (hstate-otevs s))
                                     (tm (hstate-tm s))))))))
 
@@ -1492,13 +1489,13 @@
    (implies (and (B s w)
                  (equal (hstate-tm s)
                         (timed-event-tm (car (hstate-otevs s)))))
-            (and (spec-transp w (R (hodes-transf s)))
-                 (B (hodes-transf s) (R (hodes-transf s)))))
+            (and (aeps-transp w (R (hpeps-transf s)))
+                 (B (hpeps-transf s) (R (hpeps-transf s)))))
    :hints (("Goal" :cases ((consp (hstate-otevs s)))
             :in-theory (e/d ()(r-definition-rule
-                               spec-ev-transp
-                               des-state-equal-definition-rule
-                               hodes-transf-definition-rule
+                               aeps-ev-transp
+                               aeps-state-equal-definition-rule
+                               hpeps-transf-definition-rule
                                lwfsk2a-l1-events-at-tm
                                lwfsk2a-l1-cons)))
            ("Subgoal 1" :use ((:instance lwfsk2a-l1-cons)
@@ -1519,15 +1516,15 @@
 
 (encapsulate
  nil
- (local (defthmd lwfsk2d-l1
+ (local (defthmd rlwfsk2b-l1
           (implies (and (B s w)
                         (not (equal (hstate-tm s)
                                     (timed-event-tm (car (hstate-otevs s))))))
-                   (spec-transp w (des-state (1+ (des-state-tm w))
-                                             (des-state-tevs w)
-                                             (des-state-mem w))))
+                   (aeps-transp w (aeps-state (1+ (aeps-state-tm w))
+                                             (aeps-state-tevs w)
+                                             (aeps-state-mem w))))
           :hints (("Goal" :in-theory (disable (:definition events-at-tm-definition-rule)
-                                              (:definition spec-ev-transp)
+                                              (:definition aeps-ev-transp)
                                               valid-lo-tevs->=-tm
                                               no-events-at-tm-top-of-queue-1
                                               no-events-at-tm-top-of-queue-2
@@ -1536,9 +1533,9 @@
                                     (E (hstate-otevs s))
                                     (tm (hstate-tm s)))
                          (:instance events-at-tm-l-set-equiv
-                                    (x (des-state-tevs w))
+                                    (x (aeps-state-tevs w))
                                     (y (hstate-otevs s))
-                                    (tm (des-state-tm w))))))))
+                                    (tm (aeps-state-tm w))))))))
 
  ;; (local (defthm car-valid-lo-tevs
  ;;          (implies (and (timep tm) (o-lo-tep l) l
@@ -1558,11 +1555,11 @@
  ;;                   (< tm1 (timed-event-tm (car l2))))))
  
  
- (local (defthmd lwfsk2d-l2a
+ (local (defthmd rlwfsk2b-l2a
           (implies (and (B s w) ;(HSTATE-OTEVS S)
                         (not (equal (hstate-tm s)
                                     (timed-event-tm (car (hstate-otevs s))))))
-                   (< (des-state-tm w) (hstate-tm (hodes-transf s))))
+                   (< (aeps-state-tm w) (hstate-tm (hpeps-transf s))))
           :hints (("Goal" :in-theory (disable no-events-at-tm-top-of-queue-2
                                               events-at-tm-l-set-equiv)
                    :use ((:instance no-events-at-tm-top-of-queue-2
@@ -1570,7 +1567,7 @@
                                     (tm (hstate-tm s)))
                          (:instance events-at-tm-l-set-equiv
                                     (x (hstate-otevs s))
-                                    (y (des-state-tevs w))
+                                    (y (aeps-state-tevs w))
                                     (tm (hstate-tm s))))))))
 
  (local (defthm bla
@@ -1578,51 +1575,51 @@
                         (< y x))
                    (<= (1+ y) x))))
 
- (local (defthmd lwfsk2d-l2b
+ (local (defthmd rlwfsk2b-l2b
           (implies (and (B s w) 
                         (not (equal (hstate-tm s)
                                     (timed-event-tm (car (hstate-otevs s))))))
-                   (<= (1+ (des-state-tm w)) (hstate-tm (hodes-transf s))))
-          :hints (("Goal" :use ((:instance lwfsk2d-l2a))
+                   (<= (1+ (aeps-state-tm w)) (hstate-tm (hpeps-transf s))))
+          :hints (("Goal" :use ((:instance rlwfsk2b-l2a))
                    :in-theory (e/d (timep) (valid-lo-tevs->=-tm
                                             no-events-at-tm-top-of-queue-1
                                             no-events-at-tm-top-of-queue-2
-                                            hodes-transf-definition-rule))))))
+                                            hpeps-transf-definition-rule))))))
 
- (local (defthmd lwfsk2d-l2c
+ (local (defthmd rlwfsk2b-l2c
           (implies (and (B s w) ;(hstate-otevs s)
                         (not (equal (hstate-tm s)
                                     (timed-event-tm (car (hstate-otevs s))))))
-                   (let ((u (hodes-transf s)))
-                     (and (<= (1+ (des-state-tm w)) (hstate-tm u))
-                          (set-equiv (des-state-tevs w)
+                   (let ((u (hpeps-transf s)))
+                     (and (<= (1+ (aeps-state-tm w)) (hstate-tm u))
+                          (set-equiv (aeps-state-tevs w)
                                      (history-otevs (hstate-h u)))
-                          (set-equiv (des-state-mem w)
+                          (set-equiv (aeps-state-mem w)
                                      (history-mem (hstate-h u))))))
           :hints (("Goal" :in-theory (e/d (good-histp-definition-rule
-                                           lwfsk2d-l2b
+                                           rlwfsk2b-l2b
                                            valid-lo-tevs->=-tm)
                                           (valid-lo-tevs-definition-rule))))))
 
- (local (defthmd  C-good-state-valid-lo-tevs
+ (local (defthmd  O-good-state-valid-lo-tevs
           (implies
            (and
             (valid-lo-tevs (hstate-otevs s)
                            (timed-event-tm (car (hstate-otevs s))))
-            (<= (+ 1 (des-state-tm w))
+            (<= (+ 1 (aeps-state-tm w))
                 (timed-event-tm (car (hstate-otevs s))))
-            (set-equiv (des-state-tevs w)
+            (set-equiv (aeps-state-tevs w)
                        (hstate-otevs s))
-            (des-state-tevs w)
+            (aeps-state-tevs w)
             (hstatep s)
             (valid-lo-tevs (hstate-otevs s)
                            (hstate-tm s))
-            (des-statep w))
-           (valid-lo-tevs (des-state-tevs w)
-                          (+ 1 (des-state-tm w))))
+            (aeps-statep w))
+           (valid-lo-tevs (aeps-state-tevs w)
+                          (+ 1 (aeps-state-tm w))))
           :hints (("Goal" :use ((:instance valid-lo-tevs->=-tm
                                            (t1 (timed-event-tm (car (hstate-otevs s))))
-                                           (t2 (1+ (des-state-tm w)))
+                                           (t2 (1+ (aeps-state-tm w)))
                                            (E (hstate-otevs s)))
                                 (:instance valid-lo-tevs-o-lo-tep
                                            (E (hstate-otevs s))))
@@ -1631,97 +1628,106 @@
                                    valid-lo-tevs->=-tm
                                    valid-lo-tevs-definition-rule
                                    ordered-lo-tep-definition-rule timed-event
-                                   des-state-equal-definition-rule))))))
+                                   aeps-state-equal-definition-rule))))))
  
- (local (defthmd lwfsk2d-l2-cons
-          (let ((u (hodes-transf s))
-                (v (des-state (1+ (des-state-tm w))
-                              (des-state-tevs w)
-                              (des-state-mem w))))
+ (local (defthmd rlwfsk2b-l2-cons
+          (let ((u (hpeps-transf s))
+                (v (aeps-state (1+ (aeps-state-tm w))
+                              (aeps-state-tevs w)
+                              (aeps-state-mem w))))
             (implies (and (B s w)
                           (consp (hstate-otevs s))
                           (not (equal (hstate-tm s)
                                       (timed-event-tm (car (hstate-otevs s))))))
-                     (C u v)))
+                     (O u v)))
           :hints (("Goal" :in-theory (e/d () ( o-lo-tep
                                                valid-lo-tevs-definition-rule
-                                               des-state-equal-definition-rule
+                                               aeps-state-equal-definition-rule
                                                good-histp-definition-rule
                                                hstate-equal-definition-rule))
-                   :use ((:instance lwfsk2d-l2c)
+                   :use ((:instance rlwfsk2b-l2c)
                          (:instance good-hstate-inductive)))
-                  ("Subgoal 3'" :in-theory (disable C-good-state-valid-lo-tevs)
-                   :use ((:instance C-good-state-valid-lo-tevs))))))
+                  ("Subgoal 3'" :in-theory (disable O-good-state-valid-lo-tevs)
+                   :use ((:instance O-good-state-valid-lo-tevs))))))
 
 
 
- (local (defthmd lwfsk2d-l2-empty
-          (let ((u (hodes-transf s))
-                (v (des-state (1+ (des-state-tm w))
-                              (des-state-tevs w)
-                              (des-state-mem w))))
+ (local (defthmd rlwfsk2b-l2-empty
+          (let ((u (hpeps-transf s))
+                (v (aeps-state (1+ (aeps-state-tm w))
+                              (aeps-state-tevs w)
+                              (aeps-state-mem w))))
             (implies (and (B s w)
                           (endp (hstate-otevs s)))
-                     (C u v)))
+                     (O u v)))
           :hints (("Goal" :in-theory (e/d (good-histp-definition-rule)
                                           (valid-lo-tevs->=-tm
                                            valid-lo-tevs-definition-rule
                                            no-events-at-tm-top-of-queue-1
                                            no-events-at-tm-top-of-queue-2))))))
 
- (local (defthmd lwfsk2d-l2
-          (let ((u (hodes-transf s))
-                (v (des-state (1+ (des-state-tm w))
-                              (des-state-tevs w)
-                              (des-state-mem w))))
+ (local (defthmd rlwfsk2b-l2
+          (let ((u (hpeps-transf s))
+                (v (aeps-state (1+ (aeps-state-tm w))
+                              (aeps-state-tevs w)
+                              (aeps-state-mem w))))
             (implies (and (B s w)
                           (not (equal (hstate-tm s)
                                       (timed-event-tm (car (hstate-otevs s))))))
-                     (and (C u v)
-                          (good-des-statep v))))
+                     (and (O u v)
+                          (good-aeps-statep v))))
           :hints (("Goal" :cases ((consp (hstate-otevs s)))
-                   :use ((:instance lwfsk2d-l2-empty)
-                         (:instance lwfsk2d-l2-cons))
-                   :in-theory (disable hodes-transf-definition-rule
+                   :use ((:instance rlwfsk2b-l2-empty)
+                         (:instance rlwfsk2b-l2-cons))
+                   :in-theory (disable hpeps-transf-definition-rule
                                        b-definition-rule
-                                       c-definition-rule)))))
+                                       O-definition-rule)))))
 
- (defthmd lwfsk2d-lemma
-   (let ((u (hodes-transf s))
-         (v (des-state (1+ (des-state-tm w))
-                       (des-state-tevs w)
-                       (des-state-mem w))))
+ (defthmd rlwfsk2b-lemma
+   (let ((u (hpeps-transf s))
+         (v (aeps-state (1+ (aeps-state-tm w))
+                       (aeps-state-tevs w)
+                       (aeps-state-mem w))))
      (implies (and (B s w)
                    (not (equal (hstate-tm s)
                                (timed-event-tm (car (hstate-otevs s))))))
-              (and (good-des-statep v)
-                   (spec-transp w v)
-                   (C u v))))
+              (and (good-aeps-statep v)
+                   (aeps-transp w v)
+                   (O u v))))
    :hints (("Goal" 
-            :use ((:instance lwfsk2d-l1)
-                  (:instance lwfsk2d-l2))
-            :in-theory (disable hodes-transf-definition-rule
+            :use ((:instance rlwfsk2b-l1)
+                  (:instance rlwfsk2b-l2))
+            :in-theory (disable hpeps-transf-definition-rule
                                 b-definition-rule
-                                c-definition-rule))))
+                                O-definition-rule))))
  )
 
 (defun-sk lwfsk2a (u w)
   (exists v
     (and (B u v)
-         (spec-transp w v)))
-  :witness-dcls ((declare (xargs :guard (and (hstatep u) (des-statep w))
+         (aeps-transp w v)))
+  :witness-dcls ((declare (xargs :guard (and (hstatep u) (aeps-statep w))
                                  :verify-guards nil))))
 
 (verify-guards lwfsk2a)
 
-(defun-sk lwfsk2d (u w)
+;; (defun-sk lwfsk2d (u w)
+;;   (exists v
+;;     (and (O u v)
+;;          (aeps-transp w v)))
+;;   :witness-dcls ((declare (xargs :guard (and (hstatep u) (aeps-statep w))
+;;                                  :verify-guards nil))))
+
+;; (verify-guards lwfsk2d)
+
+(defun-sk rlwfsk2b (u w)
   (exists v
-    (and (C u v)
-         (spec-transp w v)))
-  :witness-dcls ((declare (xargs :guard (and (hstatep u) (des-statep w))
+    (and (O u v)
+         (aeps-transp w v)))
+  :witness-dcls ((declare (xargs :guard (and (hstatep u) (aeps-statep w))
                                  :verify-guards nil))))
 
-(verify-guards lwfsk2d)
+(verify-guards rlwfsk2b)
 
 ;; 2a holds when s and w have an event is scheduled (both have same
 ;; otevs) at current time (both s and w have same time) While 2d holds
@@ -1730,65 +1736,103 @@
 
 (defthm R-preserves-good-state
   (implies (good-hstatep s)
-           (good-des-statep (R s)))
+           (good-aeps-statep (R s)))
   :rule-classes (:forward-chaining))
 
-(defthm B-is-a-LWFSK
-  (implies (B s w)
-           (or (lwfsk2a (hodes-transf s) w)
-               (lwfsk2d (hodes-transf s) w)))
-  :hints (("Goal" :cases ((not (equal (hstate-tm s)
-                                      (timed-event-tm (car (hstate-otevs s)))))))
-          ("Subgoal 2"
-           :use ((:instance lwfsk2a-suff
-                            (u (hodes-transf s))
-                            (v (R (hodes-transf s))))
-                 (:instance lwfsk2a-lemma))
-           :in-theory (disable hodes-transf-definition-rule
-                               good-des-statep
-                               b-definition-rule
-                               c-definition-rule
-                               good-des-statep-definition-rule
-                               good-hstatep-definition-rule
-                               r-definition-rule
-                               lwfsk2a lwfsk2a-suff
-                               lwfsk2d lwfsk2d-suff))
-          ("Subgoal 1"
-           :use ((:instance lwfsk2d-suff
-                            (u (hodes-transf s))
-                            (v (des-state (1+ (des-state-tm w))
-                                          (des-state-tevs w)
-                                          (des-state-mem w))))
-                 (:instance lwfsk2d-lemma))
-           :in-theory (disable hodes-transf-definition-rule
-                               b-definition-rule
-                               c-definition-rule
-                               good-des-statep-definition-rule
-                               good-hstatep-definition-rule
-                               r-definition-rule
-                               lwfsk2a lwfsk2a-suff
-                               lwfsk2d lwfsk2d-suff)))
-  :rule-classes nil)
+(encapsulate
+  nil
+  
+  (local (defthm lwfsk2a=>rlwfsk2b 
+           (implies (lwfsk2a u w)
+                    (rlwfsk2b u w))
+           :hints (("goal" :use  ((:instance lwfsk2a (u u) (w w))
+                                  (:instance rlwfsk2b-suff (u u) (w w) 
+                                   (v (lwfsk2a-witness u w))))
+                           :in-theory (disable (:definition B-definition-rule)
+                                               (:definition aeps-state-equal-definition-rule)
+                                               (:definition good-aeps-statep-definition-rule)
+                                               (:definition good-histp-definition-rule)
+                                               (:definition good-hstatep-definition-rule)
+                                               (:definition lwfsk2a)
+                                               (:definition rlwfsk2b))))))
+
+
+  (local (defthm B-is-an-LWFSK
+           (implies (B s w)
+                    (or (lwfsk2a (hpeps-transf s) w)
+                        (rlwfsk2b (hpeps-transf s) w)))
+           :hints (("Goal" :cases ((not (equal (hstate-tm s)
+                                               (timed-event-tm (car (hstate-otevs s)))))))
+                   ("Subgoal 2"
+                    :use ((:instance lwfsk2a-suff
+                           (u (hpeps-transf s))
+                           (v (R (hpeps-transf s))))
+                          (:instance lwfsk2a-lemma))
+                    :in-theory (disable hpeps-transf-definition-rule
+                                        good-aeps-statep
+                                        b-definition-rule
+                                        O-definition-rule
+                                        good-aeps-statep-definition-rule
+                                        good-hstatep-definition-rule
+                                        r-definition-rule
+                                        lwfsk2a lwfsk2a-suff
+                                        rlwfsk2b rlwfsk2b-suff))
+                   ("Subgoal 1"
+                    :use ((:instance rlwfsk2b-suff
+                           (u (hpeps-transf s))
+                           (v (aeps-state (1+ (aeps-state-tm w))
+                                          (aeps-state-tevs w)
+                                          (aeps-state-mem w))))
+                          (:instance rlwfsk2b-lemma))
+                    :in-theory (disable hpeps-transf-definition-rule
+                                        b-definition-rule
+                                        O-definition-rule
+                                        good-aeps-statep-definition-rule
+                                        good-hstatep-definition-rule
+                                        r-definition-rule
+                                        lwfsk2a lwfsk2a-suff
+                                        rlwfsk2b rlwfsk2b-suff)))
+           :rule-classes nil))
+
+  (defthmd B-is-an-RLWFSK
+    (implies (B s w)
+             (rlwfsk2b (hpeps-transf s) w))
+    :hints (("goal" :in-theory (disable B-definition-rule hpeps-transf rlwfsk2b rlwfsk2b-suff
+                                        lwfsk2a lwfsk2a-suff)
+                    :use ((:instance B-is-an-LWFSK)
+                          (:instance lwfsk2a=>rlwfsk2b (u (hpeps-transf s)))))))
+  )
 
 (defun-sk lwfsk2f (x y)
   (exists z
-    (and (C x z)
-         (spec-transp y z)
+    (and (O x z)
+         (aeps-transp y z)
          (< (rankls z x) (rankls y x))))
-  :witness-dcls ((declare (xargs :guard (and (hstatep x) (des-statep y))
+  :witness-dcls ((declare (xargs :guard (and (hstatep x) (aeps-statep y))
                                  :verify-guards nil))))
 
 (verify-guards lwfsk2f)
 
+
+(defun-sk rlwfsk2c (x y)
+  (exists z
+    (and (O x z)
+         (aeps-transp y z)
+         (< (rankls z x) (rankls y x))))
+  :witness-dcls ((declare (xargs :guard (and (hstatep x) (aeps-statep y))
+                                 :verify-guards nil))))
+
+(verify-guards rlwfsk2c)
+
 (encapsulate
  nil
 
- (defunc C-witness-y-tm<x-tm (y)
-   :input-contract (des-statep y)
-   :output-contract (des-statep (C-witness-y-tm<x-tm y))
-   (des-state (1+ (des-state-tm y))
-              (des-state-tevs y)
-              (des-state-mem y)))
+ (defunc O-witness-y-tm<x-tm (y)
+   :input-contract (aeps-statep y)
+   :output-contract (aeps-statep (O-witness-y-tm<x-tm y))
+   (aeps-state (1+ (aeps-state-tm y))
+              (aeps-state-tevs y)
+              (aeps-state-mem y)))
 
  (local (defthm bla
           (implies (and (timep x) (timep y)
@@ -1798,9 +1842,9 @@
 
   (local (defthm valid-lo-tevs-y-x-tm
           (implies (and (good-hstatep x)  
-                        (C x y)
-                        (< (des-state-tm y) (hstate-tm x)))
-                   (valid-lo-tevs (des-state-tevs y) (hstate-tm x)))))
+                        (O x y)
+                        (< (aeps-state-tm y) (hstate-tm x)))
+                   (valid-lo-tevs (aeps-state-tevs y) (hstate-tm x)))))
  
  
  (local (in-theory (disable no-events-at-tm-top-of-queue-2
@@ -1809,14 +1853,14 @@
  ;; These along with valid-lo-tevs->=-tm are not good rewrite rules
  ;; and often results in significant slow down.
  
- (defthm lwfsk2f-1
-   (let ((z (C-witness-y-tm<x-tm y)))
-     (implies (and (C x y)
+ (defthm rlwfsk2c-1
+   (let ((z (O-witness-y-tm<x-tm y)))
+     (implies (and (O x y)
                    (not (B x y))
-                   (< (des-state-tm y) (hstate-tm x)))
-              (and (C x z)
-                   (good-des-statep z)
-                   (spec-transp y z)
+                   (< (aeps-state-tm y) (hstate-tm x)))
+              (and (O x z)
+                   (good-aeps-statep z)
+                   (aeps-transp y z)
                    (< (rankls z x) (rankls y x))))))
 
  
@@ -1854,16 +1898,16 @@
                  :bash :bash
                  :bash :bash))
 
-;; Proof for (C x (C-witness-y-tm=x-tm x y)) follows
+;; Proof for (O x (O-witness-y-tm=x-tm x y)) follows
 (encapsulate
  nil
  
- (defunc C-witness-y-tm=x-tm (x y)
-   :input-contract (and (hstatep x) (des-statep y))
-   :output-contract (des-statep (C-witness-y-tm=x-tm x y))
-   (let* ((y-tm (des-state-tm y))
-          (y-tevs (des-state-tevs y))
-          (y-mem (des-state-mem y))
+ (defunc O-witness-y-tm=x-tm (x y)
+   :input-contract (and (hstatep x) (aeps-statep y))
+   :output-contract (aeps-statep (O-witness-y-tm=x-tm x y))
+   (let* ((y-tm (aeps-state-tm y))
+          (y-tevs (aeps-state-tevs y))
+          (y-mem (aeps-state-mem y))
           (h (hstate-h x))
           (hotevs (history-otevs h)))
      (if (consp hotevs)
@@ -1875,55 +1919,55 @@
                 (z-tevs (remove-tev tev y-tevs))
                 (z-tevs (remove-tevs rm-tevs z-tevs))
                 (z-tevs (append add-tevs z-tevs)))
-           (des-state y-tm z-tevs z-mem))
-       (des-state (1+ y-tm) y-tevs y-mem))))
+           (aeps-state y-tm z-tevs z-mem))
+       (aeps-state (1+ y-tm) y-tevs y-mem))))
 
 ;; local added
  (local (in-theory (enable good-histp-definition-rule)))
  (local (in-theory (disable valid-lo-tevs->=-tm 
                      valid-lo-tevs-definition-rule)))
 
- (local (defthmd lwfsk2f-spec-ev-transp
+ (local (defthmd rlwfsk2c-aeps-ev-transp
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (C x y)
+                        (good-aeps-statep y)
+                        (O x y)
                         (not (B x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (spec-ev-transp y (C-witness-y-tm=x-tm x y)))
-          :hints (("Goal" :in-theory (disable spec-ev-transp-suff)
-                   :use ((:instance spec-ev-transp-suff
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (aeps-ev-transp y (O-witness-y-tm=x-tm x y)))
+          :hints (("Goal" :in-theory (disable aeps-ev-transp-suff)
+                   :use ((:instance aeps-ev-transp-suff
                                     (w y)
-                                    (v (C-witness-y-tm=x-tm x y))
+                                    (v (O-witness-y-tm=x-tm x y))
                                     (tev (car (history-otevs (hstate-h x))))))))))
  
- (local (defthmd lwfsk2f-event-at-y-tm
+ (local (defthmd rlwfsk2c-event-at-y-tm
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (C x y)
+                        (good-aeps-statep y)
+                        (O x y)
                         (not (B x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (events-at-tm (des-state-tevs y) (des-state-tm y)))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (events-at-tm (aeps-state-tevs y) (aeps-state-tm y)))
           :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv)
                    :use ((:instance events-at-tm-l-set-equiv
                                     (x (history-otevs (hstate-h x)))
-                                    (y (des-state-tevs y))
+                                    (y (aeps-state-tevs y))
                                     (tm (timed-event-tm
                                          (car (history-otevs (hstate-h x)))))))))))
                    
- (defthmd lwfsk2f-spec-transp
-   (implies (and (C x y)
+ (defthmd rlwfsk2c-aeps-transp
+   (implies (and (O x y)
                  (not (B x y))
-                 (equal (des-state-tm y) (hstate-tm x)))
-            (spec-transp y (C-witness-y-tm=x-tm x y)))
-   :hints (("Goal" :in-theory (e/d (spec-transp-definition-rule)
+                 (equal (aeps-state-tm y) (hstate-tm x)))
+            (aeps-transp y (O-witness-y-tm=x-tm x y)))
+   :hints (("Goal" :in-theory (e/d (aeps-transp-definition-rule)
                                    (good-hstatep-definition-rule
-                                    good-des-statep-definition-rule
-                                    c-witness-y-tm=x-tm-definition-rule
-                                    des-state-equal-definition-rule
-                                    c-definition-rule
+                                    good-aeps-statep-definition-rule
+                                    O-witness-y-tm=x-tm-definition-rule
+                                    aeps-state-equal-definition-rule
+                                    O-definition-rule
                                     b-definition-rule))
-            :use ((:instance lwfsk2f-event-at-y-tm)
-                  (:instance lwfsk2f-spec-ev-transp)))))
+            :use ((:instance rlwfsk2c-event-at-y-tm)
+                  (:instance rlwfsk2c-aeps-ev-transp)))))
 
  )
 
@@ -2039,29 +2083,29 @@
 
  (local (defthm l3c
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (c x y)
-                        (not (b x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
+                        (good-aeps-statep y)
+                        (O x y)
+                        (not (B x y))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
                    (member-equal (car (history-otevs (hstate-h x)))
-                                 (events-at-tm (des-state-tevs y)
-                                               (des-state-tm y))))
+                                 (events-at-tm (aeps-state-tevs y)
+                                               (aeps-state-tm y))))
           :hints (("Goal" :in-theory (disable events-at-tm-l-set-equiv
                                               b-definition-rule
-                                              good-des-statep-definition-rule
+                                              good-aeps-statep-definition-rule
                                               good-hstatep-definition-rule)
                    :use ((:instance events-at-tm-l-set-equiv
                                     (y (history-otevs (hstate-h x)))
-                                    (x (des-state-tevs y))
-                                    (tm (des-state-tm y)))
+                                    (x (aeps-state-tevs y))
+                                    (tm (aeps-state-tm y)))
                          (:instance history-tevs-car)
                          (:instance l3a (l (history-otevs (hstate-h x)))))))))
 
  (defthmd l4
-   (implies (and (C x y)
+   (implies (and (O x y)
                  (not (B x y))
-                 (equal (des-state-tm y) (hstate-tm x)))
-            (< (rankls (C-witness-y-tm=x-tm x y) x)
+                 (equal (aeps-state-tm y) (hstate-tm x)))
+            (< (rankls (O-witness-y-tm=x-tm x y) x)
                (rankls y x)))
    :hints (("Goal" :in-theory (disable l3b l3c
                                        events-at-tm-l-set-equiv
@@ -2072,17 +2116,17 @@
                   (:instance l3-2
                              (tev (car (history-otevs (hstate-h x))))
                              (tm (timed-event-tm (car (history-otevs (hstate-h x)))))
-                             (l2 (DES-STATE-TEVS Y))
-                             (mem (DES-STATE-MEM Y))
+                             (l2 (AEPS-STATE-TEVS Y))
+                             (mem (AEPS-STATE-MEM Y))
                              (r (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                                (DES-STATE-TM Y)
-                                                (DES-STATE-MEM Y))))
+                                                (AEPS-STATE-TM Y)
+                                                (AEPS-STATE-MEM Y))))
                   (:instance l3b
-                             (l2 (DES-STATE-TEVS Y))
-                             (mem (DES-STATE-MEM Y))
+                             (l2 (AEPS-STATE-TEVS Y))
+                             (mem (AEPS-STATE-MEM Y))
                              (r (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                                (DES-STATE-TM Y)
-                                                (DES-STATE-MEM Y))))
+                                                (AEPS-STATE-TM Y)
+                                                (AEPS-STATE-MEM Y))))
                   (:instance history-tevs-car)))))
  )
 
@@ -2167,13 +2211,13 @@
                                        remove-tev-definition-rule
                                        timed-event
                                        valid-lo-tevs-append)))))
- (local (defthmd lwfsk2f-C-1
+ (local (defthmd rlwfsk2c-O-1
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (C x y)
+                        (good-aeps-statep y)
+                        (O x y)
                         (not (B x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (good-des-statep (C-witness-y-tm=x-tm x y)))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (good-aeps-statep (O-witness-y-tm=x-tm x y)))
           :hints (("Goal" :in-theory (disable remove-tev-o-lo-tep
                                               valid-lo-tevs-o-lo-tep
                                               o-lo-tep-definition-rule
@@ -2183,48 +2227,48 @@
                                               timed-event))
                   ("subgoal 4.4" :use ((:instance valid-lo-tevs->=-tm
                                                   (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
-                                                                      (des-state-tm y)
-                                                                      (des-state-mem y)))
-                                                  (t1 (1+ (des-state-tm y)))
-                                                  (t2 (des-state-tm y))))
+                                                                      (aeps-state-tm y)
+                                                                      (aeps-state-mem y)))
+                                                  (t1 (1+ (aeps-state-tm y)))
+                                                  (t2 (aeps-state-tm y))))
                    :in-theory (disable (:rewrite valid-lo-tevs->=-tm)))
                   ("subgoal 4.3" :in-theory (disable remove-tev-valid-1-general
                                                      remove-tevs-valid-lo-tevs)
                    :use ((:instance remove-tev-valid-1-general
-                                    (l (des-state-tevs y))
-                                    (tm (des-state-tm y))
+                                    (l (aeps-state-tevs y))
+                                    (tm (aeps-state-tm y))
                                     (tev (CAR (HISTORY-OTEVS (HSTATE-H X)))))
                          (:instance remove-tevs-valid-lo-tevs
                                     (l (remove-tev (car (history-otevs (hstate-h x)))
-                                                   (des-state-tevs y)))
+                                                   (aeps-state-tevs y)))
                                     (l1 (step-events-rm (timed-event-ev (car (history-otevs (hstate-h x))))
-                                                        (des-state-tm y)
-                                                        (des-state-mem y)))
-                                    (tm (des-state-tm y)))))
+                                                        (aeps-state-tm y)
+                                                        (aeps-state-mem y)))
+                                    (tm (aeps-state-tm y)))))
                   ("subgoal 4.2" :use ((:instance valid-lo-tevs->=-tm
                                                   (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
-                                                                      (des-state-tm y)
-                                                                      (des-state-mem y)))
-                                                  (t1 (1+ (des-state-tm y)))
-                                                  (t2 (des-state-tm y)))))
+                                                                      (aeps-state-tm y)
+                                                                      (aeps-state-mem y)))
+                                                  (t1 (1+ (aeps-state-tm y)))
+                                                  (t2 (aeps-state-tm y)))))
                   ("subgoal 4.1" :use ((:instance valid-lo-tevs->=-tm
                                                   (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
-                                                                      (des-state-tm y)
-                                                                      (des-state-mem y)))
-                                                  (t1 (1+ (des-state-tm y)))
-                                                  (t2 (des-state-tm y)))))
+                                                                      (aeps-state-tm y)
+                                                                      (aeps-state-mem y)))
+                                                  (t1 (1+ (aeps-state-tm y)))
+                                                  (t2 (aeps-state-tm y)))))
                   ("subgoal 2.2" :use ((:instance valid-lo-tevs->=-tm
                                                   (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
-                                                                      (des-state-tm y)
-                                                                      (des-state-mem y)))
-                                                  (t1 (1+ (des-state-tm y)))
-                                                  (t2 (des-state-tm y)))))
+                                                                      (aeps-state-tm y)
+                                                                      (aeps-state-mem y)))
+                                                  (t1 (1+ (aeps-state-tm y)))
+                                                  (t2 (aeps-state-tm y)))))
                   ("subgoal 2.1" :use ((:instance valid-lo-tevs->=-tm
                                                   (e (step-events-add (timed-event-ev (car (history-otevs (hstate-h x))))
-                                                                      (des-state-tm y)
-                                                                      (des-state-mem y)))
-                                                  (t1 (1+ (des-state-tm y)))
-                                                  (t2 (des-state-tm y))))
+                                                                      (aeps-state-tm y)
+                                                                      (aeps-state-mem y)))
+                                                  (t1 (1+ (aeps-state-tm y)))
+                                                  (t2 (aeps-state-tm y))))
                    :in-theory (disable (:rewrite valid-lo-tevs->=-tm))))))
 
  (in-theory (disable  acl2::commutativity-of-append-under-set-equiv))
@@ -2234,61 +2278,61 @@
 
  (local (defthm c3
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (c x y)
-                        (not (b x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (equal (des-state-tm (R x)) (des-state-tm (c-witness-y-tm=x-tm x y))))))
+                        (good-aeps-statep y)
+                        (O x y)
+                        (not (B x y))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (equal (aeps-state-tm (R x)) (aeps-state-tm (O-witness-y-tm=x-tm x y))))))
 
  (local (defthm foo-1
           (IMPLIES
            (AND
             (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                   (DES-STATE-TM Y))
+                   (AEPS-STATE-TM Y))
             (HSTATEP X)
             (VALID-LO-TEVS (HSTATE-OTEVS X)
-                           (DES-STATE-TM Y))
+                           (AEPS-STATE-TM Y))
             (HISTORY-OTEVS (HSTATE-H X))
             (HSTATE-EQUAL
              (HSTATE
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (INSERT-OTEVS
                (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                            (DES-STATE-TM Y)
+                            (AEPS-STATE-TM Y)
                             (HISTORY-MEM (HSTATE-H X)))
                (CDR (HISTORY-OTEVS (HSTATE-H X))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                           (DES-STATE-TM Y)
+                           (AEPS-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
               (HISTORY T (HISTORY-TM (HSTATE-H X))
                        (HISTORY-OTEVS (HSTATE-H X))
                        (HISTORY-MEM (HSTATE-H X))))
              X)
-            (DES-STATEP Y)
-            (VALID-LO-TEVS (DES-STATE-TEVS Y)
-                           (DES-STATE-TM Y))
+            (AEPS-STATEP Y)
+            (VALID-LO-TEVS (AEPS-STATE-TEVS Y)
+                           (AEPS-STATE-TM Y))
             (HISTORY-VALID (HSTATE-H X))
-            (SET-EQUIV (DES-STATE-TEVS Y)
+            (SET-EQUIV (AEPS-STATE-TEVS Y)
                        (HISTORY-OTEVS (HSTATE-H X)))
-            (SET-EQUIV (DES-STATE-MEM Y)
+            (SET-EQUIV (AEPS-STATE-MEM Y)
                        (HISTORY-MEM (HSTATE-H X)))
-            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+            (NOT (EQUAL (AEPS-STATE (AEPS-STATE-TM Y)
                                    (HSTATE-OTEVS X)
                                    (HSTATE-MEM X))
                         Y))
-            (NOT (SET-EQUIV (DES-STATE-MEM Y)
+            (NOT (SET-EQUIV (AEPS-STATE-MEM Y)
                             (HSTATE-MEM X)))
-            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X))
+            (EQUAL (AEPS-STATE-TM Y) (HSTATE-TM X))
             (SET-EQUIV (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
-                                    (DES-STATE-MEM Y))
+                                    (AEPS-STATE-TM Y)
+                                    (AEPS-STATE-MEM Y))
                        (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
+                                    (AEPS-STATE-TM Y)
                                     (HISTORY-MEM (HSTATE-H X)))))
            (SET-EQUIV
             (HSTATE-OTEVS X)
             (APPEND (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                 (DES-STATE-TM Y)
+                                 (AEPS-STATE-TM Y)
                                  (HISTORY-MEM (HSTATE-H X)))
                     (CDR (HISTORY-OTEVS (HSTATE-H X))))))
           :INSTRUCTIONS
@@ -2297,16 +2341,16 @@
            (:EQUIV
             X
             (HSTATE
-             (DES-STATE-TM Y)
+             (AEPS-STATE-TM Y)
              (INSERT-OTEVS
               (STEP-EVENTS-ADD
                (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-               (DES-STATE-TM Y)
+               (AEPS-STATE-TM Y)
                (HISTORY-MEM (HSTATE-H X)))
               (CDR (HISTORY-OTEVS (HSTATE-H X))))
              (STEP-MEMORY
               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (HISTORY-MEM (HSTATE-H X)))
              (HISTORY T (HISTORY-TM (HSTATE-H X))
                       (HISTORY-OTEVS (HSTATE-H X))
@@ -2320,26 +2364,26 @@
            :BASH :BASH)))
 
  (local (defthm p1
-          (implies (and (HSTATEP X) (DES-STATEP Y)
-                        (SET-EQUIV (DES-STATE-TEVS Y)
+          (implies (and (HSTATEP X) (AEPS-STATEP Y)
+                        (SET-EQUIV (AEPS-STATE-TEVS Y)
                                    (HISTORY-OTEVS (HSTATE-H X)))
                         (HISTORY-OTEVS (HSTATE-H X)))
                    (set-equiv (REMOVE-TEV (CAR (HISTORY-OTEVS (HSTATE-H X)))
-                                          (DES-STATE-TEVS Y))
+                                          (AEPS-STATE-TEVS Y))
                               (remove-tev (CAR (HISTORY-OTEVS (HSTATE-H X)))
                                           (HISTORY-OTEVS (HSTATE-H X)))))
           :hints (("goal" :use (:instance remove-tev-preserves-set-equiv
-                                          (x (DES-STATE-TEVS Y))
+                                          (x (AEPS-STATE-TEVS Y))
                                           (y (HISTORY-OTEVS (HSTATE-H X)))
                                           (tev (CAR (HISTORY-OTEVS (HSTATE-H X)))))))))
 
  (local (defthm p2
-          (implies (and (HSTATEP X) (DES-STATEP Y)
-                        (SET-EQUIV (DES-STATE-TEVS Y)
+          (implies (and (HSTATEP X) (AEPS-STATEP Y)
+                        (SET-EQUIV (AEPS-STATE-TEVS Y)
                                    (HISTORY-OTEVS (HSTATE-H X)))
                         (HISTORY-OTEVS (HSTATE-H X)))
                    (set-equiv (REMOVE-TEV (CAR (HISTORY-OTEVS (HSTATE-H X)))
-                                          (DES-STATE-TEVS Y))
+                                          (AEPS-STATE-TEVS Y))
                               (cdr (HISTORY-OTEVS (HSTATE-H X)))))))
 
  (local (defthmd p3
@@ -2387,38 +2431,38 @@
                                        remove-tevs-l-equiv-is-set-equiv-1)))))
 
  (local (defthm p5
-          (implies (and (HSTATEP X) (DES-STATEP Y)
-                        (SET-EQUIV (DES-STATE-TEVS Y)
+          (implies (and (HSTATEP X) (AEPS-STATEP Y)
+                        (SET-EQUIV (AEPS-STATE-TEVS Y)
                                    (HISTORY-OTEVS (HSTATE-H X)))
-                        (SET-EQUIV (DES-STATE-MEM Y)
+                        (SET-EQUIV (AEPS-STATE-MEM Y)
                                    (HISTORY-MEM (HSTATE-H X)))
                         (HISTORY-OTEVS (HSTATE-H X)))
                    (set-equiv
                     (remove-tevs
                      (step-events-rm (timed-event-ev (car (history-otevs (hstate-h x))))
-                                     (des-state-tm y)
+                                     (aeps-state-tm y)
                                      (history-mem (hstate-h x)))
                      (cdr (history-otevs (hstate-h x))))
                     (remove-tevs
                      (step-events-rm (timed-event-ev (car (history-otevs (hstate-h x))))
-                                     (des-state-tm y)
-                                     (des-state-mem y))
+                                     (aeps-state-tm y)
+                                     (aeps-state-mem y))
                      (remove-tev (car (history-otevs (hstate-h x)))
-                                 (des-state-tevs y)))))
+                                 (aeps-state-tevs y)))))
           :hints (("goal" :use ((:instance step-events-rm-congruence
                                            (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
-                                           (tm (des-state-tm y))
+                                           (tm (aeps-state-tm y))
                                            (mem (history-mem (hstate-h x)))
-                                           (mem-equiv (des-state-mem y)))
+                                           (mem-equiv (aeps-state-mem y)))
                                 (:instance p4
                                            (x (HISTORY-OTEVS (HSTATE-H X)))
                                            (r1 (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                                               (DES-STATE-TM Y)
+                                                               (AEPS-STATE-TM Y)
                                                                (HISTORY-MEM (HSTATE-H X))))
                                            (r2 (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                                               (DES-STATE-TM Y)
-                                                               (DES-STATE-MEM Y)))
-                                           (y (DES-STATE-TEVS Y))))))))
+                                                               (AEPS-STATE-TM Y)
+                                                               (AEPS-STATE-MEM Y)))
+                                           (y (AEPS-STATE-TEVS Y))))))))
  
 
  (local (in-theory (disable p1 p2 p3 p4 p5)))
@@ -2427,91 +2471,91 @@
           (IMPLIES
            (AND
             (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                   (DES-STATE-TM Y))
+                   (AEPS-STATE-TM Y))
             (SET-EQUIV
              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
-                              (DES-STATE-MEM Y))
+                              (AEPS-STATE-TM Y)
+                              (AEPS-STATE-MEM Y))
              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
+                              (AEPS-STATE-TM Y)
                               (HISTORY-MEM (HSTATE-H X))))
             (SET-EQUIV
              (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                             (DES-STATE-TM Y)
-                             (DES-STATE-MEM Y))
+                             (AEPS-STATE-TM Y)
+                             (AEPS-STATE-MEM Y))
              (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                             (DES-STATE-TM Y)
+                             (AEPS-STATE-TM Y)
                              (HISTORY-MEM (HSTATE-H X))))
             (HSTATEP X)
             (VALID-LO-TEVS (HSTATE-OTEVS X)
-                           (DES-STATE-TM Y))
+                           (AEPS-STATE-TM Y))
             (HISTORY-OTEVS (HSTATE-H X))
             (HSTATE-EQUAL
              (HSTATE
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (INSERT-OTEVS
                (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                (DES-STATE-TM Y)
+                                (AEPS-STATE-TM Y)
                                 (HISTORY-MEM (HSTATE-H X)))
                (REMOVE-TEVS
                 (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                (DES-STATE-TM Y)
+                                (AEPS-STATE-TM Y)
                                 (HISTORY-MEM (HSTATE-H X)))
                 (CDR (HISTORY-OTEVS (HSTATE-H X)))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                           (DES-STATE-TM Y)
+                           (AEPS-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
               (HISTORY T (HISTORY-TM (HSTATE-H X))
                        (HISTORY-OTEVS (HSTATE-H X))
                        (HISTORY-MEM (HSTATE-H X))))
              X)
             (VALID-LO-TEVS (HISTORY-OTEVS (HSTATE-H X))
-                           (DES-STATE-TM Y))
-            (DES-STATEP Y)
-            (VALID-LO-TEVS (DES-STATE-TEVS Y)
-                           (DES-STATE-TM Y))
+                           (AEPS-STATE-TM Y))
+            (AEPS-STATEP Y)
+            (VALID-LO-TEVS (AEPS-STATE-TEVS Y)
+                           (AEPS-STATE-TM Y))
             (HISTORY-VALID (HSTATE-H X))
-            (SET-EQUIV (DES-STATE-TEVS Y)
+            (SET-EQUIV (AEPS-STATE-TEVS Y)
                        (HISTORY-OTEVS (HSTATE-H X)))
-            (SET-EQUIV (DES-STATE-MEM Y)
+            (SET-EQUIV (AEPS-STATE-MEM Y)
                        (HISTORY-MEM (HSTATE-H X)))
-            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+            (NOT (EQUAL (AEPS-STATE (AEPS-STATE-TM Y)
                                    (HSTATE-OTEVS X)
                                    (HSTATE-MEM X))
                         Y))
-            (NOT (SET-EQUIV (DES-STATE-MEM Y)
+            (NOT (SET-EQUIV (AEPS-STATE-MEM Y)
                             (HSTATE-MEM X)))
-            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
+            (EQUAL (AEPS-STATE-TM Y) (HSTATE-TM X)))
            (SET-EQUIV
             (HSTATE-OTEVS X)
             (APPEND
              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
-                              (DES-STATE-MEM Y))
+                              (AEPS-STATE-TM Y)
+                              (AEPS-STATE-MEM Y))
              (REMOVE-TEVS
               (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
-                              (DES-STATE-MEM Y))
+                              (AEPS-STATE-TM Y)
+                              (AEPS-STATE-MEM Y))
               (REMOVE-TEV (CAR (HISTORY-OTEVS (HSTATE-H X)))
-                          (DES-STATE-TEVS Y))))))
+                          (AEPS-STATE-TEVS Y))))))
           :INSTRUCTIONS
           (:PROMOTE
            :EXPAND (:DV 1)
            (:EQUIV
             X
             (HSTATE
-             (DES-STATE-TM Y)
+             (AEPS-STATE-TM Y)
              (INSERT-OTEVS
               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
               (REMOVE-TEVS
                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
              (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                          (DES-STATE-TM Y)
+                          (AEPS-STATE-TM Y)
                           (HISTORY-MEM (HSTATE-H X)))
              (HISTORY T (HISTORY-TM (HSTATE-H X))
                       (HISTORY-OTEVS (HSTATE-H X))
@@ -2526,7 +2570,7 @@
            :UP
            (:DV 1 1)
            (:REWRITE STEP-EVENTS-ADD-CONGRUENCE
-                     ((MEM-EQUIV (DES-STATE-MEM Y))))
+                     ((MEM-EQUIV (AEPS-STATE-MEM Y))))
            :UP
            :UP
            :BASH
@@ -2543,69 +2587,69 @@
           (IMPLIES
            (AND
             (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                   (DES-STATE-TM Y))
+                   (AEPS-STATE-TM Y))
             (SET-EQUIV
              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
-                              (DES-STATE-MEM Y))
+                              (AEPS-STATE-TM Y)
+                              (AEPS-STATE-MEM Y))
              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
+                              (AEPS-STATE-TM Y)
                               (HISTORY-MEM (HSTATE-H X))))
             (SET-EQUIV
              (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                             (DES-STATE-TM Y)
-                             (DES-STATE-MEM Y))
+                             (AEPS-STATE-TM Y)
+                             (AEPS-STATE-MEM Y))
              (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                             (DES-STATE-TM Y)
+                             (AEPS-STATE-TM Y)
                              (HISTORY-MEM (HSTATE-H X))))
             (HSTATEP X)
             (VALID-LO-TEVS (HSTATE-OTEVS X)
-                           (DES-STATE-TM Y))
+                           (AEPS-STATE-TM Y))
             (HISTORY-OTEVS (HSTATE-H X))
             (HSTATE-EQUAL
              (HSTATE
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (INSERT-OTEVS
                (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                (DES-STATE-TM Y)
+                                (AEPS-STATE-TM Y)
                                 (HISTORY-MEM (HSTATE-H X)))
                (REMOVE-TEVS
                 (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                (DES-STATE-TM Y)
+                                (AEPS-STATE-TM Y)
                                 (HISTORY-MEM (HSTATE-H X)))
                 (CDR (HISTORY-OTEVS (HSTATE-H X)))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                           (DES-STATE-TM Y)
+                           (AEPS-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
               (HISTORY T (HISTORY-TM (HSTATE-H X))
                        (HISTORY-OTEVS (HSTATE-H X))
                        (HISTORY-MEM (HSTATE-H X))))
              X)
-            (DES-STATEP Y)
-            (VALID-LO-TEVS (DES-STATE-TEVS Y)
-                           (DES-STATE-TM Y))
+            (AEPS-STATEP Y)
+            (VALID-LO-TEVS (AEPS-STATE-TEVS Y)
+                           (AEPS-STATE-TM Y))
             (HISTORY-VALID (HSTATE-H X))
-            (SET-EQUIV (DES-STATE-TEVS Y)
+            (SET-EQUIV (AEPS-STATE-TEVS Y)
                        (HISTORY-OTEVS (HSTATE-H X)))
-            (SET-EQUIV (DES-STATE-MEM Y)
+            (SET-EQUIV (AEPS-STATE-MEM Y)
                        (HISTORY-MEM (HSTATE-H X)))
-            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+            (NOT (EQUAL (AEPS-STATE (AEPS-STATE-TM Y)
                                    (HSTATE-OTEVS X)
                                    (HSTATE-MEM X))
                         Y))
-            (NOT (SET-EQUIV (DES-STATE-TEVS Y)
+            (NOT (SET-EQUIV (AEPS-STATE-TEVS Y)
                             (HSTATE-OTEVS X)))
-            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
+            (EQUAL (AEPS-STATE-TM Y) (HSTATE-TM X)))
            (SET-EQUIV
             (HSTATE-OTEVS X)
             (APPEND
              (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
-                              (DES-STATE-MEM Y))
+                              (AEPS-STATE-TM Y)
+                              (AEPS-STATE-MEM Y))
              (REMOVE-TEVS
               (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                              (DES-STATE-TM Y)
-                              (DES-STATE-MEM Y))
+                              (AEPS-STATE-TM Y)
+                              (AEPS-STATE-MEM Y))
               (CDR (HISTORY-OTEVS (HSTATE-H X)))))))
           :INSTRUCTIONS
           (:PROMOTE
@@ -2613,18 +2657,18 @@
            (:EQUIV
             X
             (HSTATE
-             (DES-STATE-TM Y)
+             (AEPS-STATE-TM Y)
              (INSERT-OTEVS
               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
               (REMOVE-TEVS
                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
              (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                          (DES-STATE-TM Y)
+                          (AEPS-STATE-TM Y)
                           (HISTORY-MEM (HSTATE-H X)))
              (HISTORY T (HISTORY-TM (HSTATE-H X))
                       (HISTORY-OTEVS (HSTATE-H X))
@@ -2639,7 +2683,7 @@
            :UP
            (:DV 1 1)
            (:REWRITE STEP-EVENTS-ADD-CONGRUENCE
-                     ((MEM-EQUIV (DES-STATE-MEM Y))))
+                     ((MEM-EQUIV (AEPS-STATE-MEM Y))))
            :UP
            :UP
            :BASH
@@ -2657,23 +2701,23 @@
 
  (local (defthm c2
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (C x y)
+                        (good-aeps-statep y)
+                        (O x y)
                         (not (B x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (set-equiv (des-state-tevs (R x))
-                              (des-state-tevs (c-witness-y-tm=x-tm x y))))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (set-equiv (aeps-state-tevs (R x))
+                              (aeps-state-tevs (O-witness-y-tm=x-tm x y))))
           :hints (("goal" :in-theory (disable history-tevs-car)
                    :use ((:instance history-tevs-car)
                          (:instance step-events-add-congruence
                                     (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
-                                    (tm (des-state-tm y))
-                                    (mem (des-state-mem y))
+                                    (tm (aeps-state-tm y))
+                                    (mem (aeps-state-mem y))
                                     (mem-equiv (history-mem (hstate-h x))))
                          (:instance step-events-rm-congruence
                                     (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
-                                    (tm (des-state-tm y))
-                                    (mem (des-state-mem y))
+                                    (tm (aeps-state-tm y))
+                                    (mem (aeps-state-mem y))
                                     (mem-equiv (history-mem (hstate-h x)))))
                    :do-not '(eliminate-destructors)))))
  
@@ -2682,74 +2726,74 @@
           (IMPLIES
            (AND
             (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                   (DES-STATE-TM Y))
+                   (AEPS-STATE-TM Y))
             (SET-EQUIV (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
-                                    (DES-STATE-MEM Y))
+                                    (AEPS-STATE-TM Y)
+                                    (AEPS-STATE-MEM Y))
                        (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
+                                    (AEPS-STATE-TM Y)
                                     (HISTORY-MEM (HSTATE-H X))))
             (HSTATEP X)
             (VALID-LO-TEVS (HSTATE-OTEVS X)
-                           (DES-STATE-TM Y))
+                           (AEPS-STATE-TM Y))
             (HISTORY-OTEVS (HSTATE-H X))
             (HSTATE-EQUAL
              (HSTATE
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (INSERT-OTEVS
                (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                (DES-STATE-TM Y)
+                                (AEPS-STATE-TM Y)
                                 (HISTORY-MEM (HSTATE-H X)))
                (REMOVE-TEVS
                 (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                (DES-STATE-TM Y)
+                                (AEPS-STATE-TM Y)
                                 (HISTORY-MEM (HSTATE-H X)))
                 (CDR (HISTORY-OTEVS (HSTATE-H X)))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                           (DES-STATE-TM Y)
+                           (AEPS-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
               (HISTORY T (HISTORY-TM (HSTATE-H X))
                        (HISTORY-OTEVS (HSTATE-H X))
                        (HISTORY-MEM (HSTATE-H X))))
              X)
-            (DES-STATEP Y)
-            (VALID-LO-TEVS (DES-STATE-TEVS Y)
-                           (DES-STATE-TM Y))
+            (AEPS-STATEP Y)
+            (VALID-LO-TEVS (AEPS-STATE-TEVS Y)
+                           (AEPS-STATE-TM Y))
             (HISTORY-VALID (HSTATE-H X))
-            (SET-EQUIV (DES-STATE-TEVS Y)
+            (SET-EQUIV (AEPS-STATE-TEVS Y)
                        (HISTORY-OTEVS (HSTATE-H X)))
-            (SET-EQUIV (DES-STATE-MEM Y)
+            (SET-EQUIV (AEPS-STATE-MEM Y)
                        (HISTORY-MEM (HSTATE-H X)))
-            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+            (NOT (EQUAL (AEPS-STATE (AEPS-STATE-TM Y)
                                    (HSTATE-OTEVS X)
                                    (HSTATE-MEM X))
                         Y))
-            (NOT (SET-EQUIV (DES-STATE-MEM Y)
+            (NOT (SET-EQUIV (AEPS-STATE-MEM Y)
                             (HSTATE-MEM X)))
-            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
+            (EQUAL (AEPS-STATE-TM Y) (HSTATE-TM X)))
            (SET-EQUIV (HSTATE-MEM X)
                       (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                   (DES-STATE-TM Y)
-                                   (DES-STATE-MEM Y))))
+                                   (AEPS-STATE-TM Y)
+                                   (AEPS-STATE-MEM Y))))
           :INSTRUCTIONS
           (:PROMOTE
            :EXPAND (:DV 1)
            (:EQUIV
             X
             (HSTATE
-             (DES-STATE-TM Y)
+             (AEPS-STATE-TM Y)
              (INSERT-OTEVS
               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
               (REMOVE-TEVS
                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
              (STEP-MEMORY
               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (HISTORY-MEM (HSTATE-H X)))
              (HISTORY T (HISTORY-TM (HSTATE-H X))
                       (HISTORY-OTEVS (HSTATE-H X))
@@ -2764,74 +2808,74 @@
           (IMPLIES
            (AND
             (EQUAL (TIMED-EVENT-TM (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                   (DES-STATE-TM Y))
+                   (AEPS-STATE-TM Y))
             (SET-EQUIV (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
-                                    (DES-STATE-MEM Y))
+                                    (AEPS-STATE-TM Y)
+                                    (AEPS-STATE-MEM Y))
                        (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                    (DES-STATE-TM Y)
+                                    (AEPS-STATE-TM Y)
                                     (HISTORY-MEM (HSTATE-H X))))
             (HSTATEP X)
             (VALID-LO-TEVS (HSTATE-OTEVS X)
-                           (DES-STATE-TM Y))
+                           (AEPS-STATE-TM Y))
             (HISTORY-OTEVS (HSTATE-H X))
             (HSTATE-EQUAL
              (HSTATE
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (INSERT-OTEVS
               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
               (REMOVE-TEVS
                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
               (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                           (DES-STATE-TM Y)
+                           (AEPS-STATE-TM Y)
                            (HISTORY-MEM (HSTATE-H X)))
               (HISTORY T (HISTORY-TM (HSTATE-H X))
                        (HISTORY-OTEVS (HSTATE-H X))
                        (HISTORY-MEM (HSTATE-H X))))
              X)
-            (DES-STATEP Y)
-            (VALID-LO-TEVS (DES-STATE-TEVS Y)
-                           (DES-STATE-TM Y))
+            (AEPS-STATEP Y)
+            (VALID-LO-TEVS (AEPS-STATE-TEVS Y)
+                           (AEPS-STATE-TM Y))
             (HISTORY-VALID (HSTATE-H X))
-            (SET-EQUIV (DES-STATE-TEVS Y)
+            (SET-EQUIV (AEPS-STATE-TEVS Y)
                        (HISTORY-OTEVS (HSTATE-H X)))
-            (SET-EQUIV (DES-STATE-MEM Y)
+            (SET-EQUIV (AEPS-STATE-MEM Y)
                        (HISTORY-MEM (HSTATE-H X)))
-            (NOT (EQUAL (DES-STATE (DES-STATE-TM Y)
+            (NOT (EQUAL (AEPS-STATE (AEPS-STATE-TM Y)
                                    (HSTATE-OTEVS X)
                                    (HSTATE-MEM X))
                         Y))
-            (NOT (SET-EQUIV (DES-STATE-TEVS Y)
+            (NOT (SET-EQUIV (AEPS-STATE-TEVS Y)
                             (HSTATE-OTEVS X)))
-            (EQUAL (DES-STATE-TM Y) (HSTATE-TM X)))
+            (EQUAL (AEPS-STATE-TM Y) (HSTATE-TM X)))
            (SET-EQUIV (HSTATE-MEM X)
                       (STEP-MEMORY (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                                   (DES-STATE-TM Y)
-                                   (DES-STATE-MEM Y))))
+                                   (AEPS-STATE-TM Y)
+                                   (AEPS-STATE-MEM Y))))
           :INSTRUCTIONS
           (:PROMOTE
            :EXPAND (:DV 1)
            (:EQUIV
             X
             (HSTATE
-             (DES-STATE-TM Y)
+             (AEPS-STATE-TM Y)
              (INSERT-OTEVS
               (STEP-EVENTS-ADD (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
               (REMOVE-TEVS
                (STEP-EVENTS-RM (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-                               (DES-STATE-TM Y)
+                               (AEPS-STATE-TM Y)
                                (HISTORY-MEM (HSTATE-H X)))
                (CDR (HISTORY-OTEVS (HSTATE-H X)))))
              (STEP-MEMORY
               (TIMED-EVENT-EV (CAR (HISTORY-OTEVS (HSTATE-H X))))
-              (DES-STATE-TM Y)
+              (AEPS-STATE-TM Y)
               (HISTORY-MEM (HSTATE-H X)))
              (HISTORY T (HISTORY-TM (HSTATE-H X))
                       (HISTORY-OTEVS (HSTATE-H X))
@@ -2844,179 +2888,179 @@
  
  (local (defthm c1
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (c x y)
-                        (not (b x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (set-equiv (des-state-mem (c-witness-y-tm=x-tm x y))
-                              (des-state-mem (r x))))
+                        (good-aeps-statep y)
+                        (O x y)
+                        (not (B x y))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (set-equiv (aeps-state-mem (O-witness-y-tm=x-tm x y))
+                              (aeps-state-mem (r x))))
           :hints (("goal" :in-theory (disable history-tevs-car)
                    :use ((:instance history-tevs-car)
                          (:instance step-memory-congruence
                                     (ev (timed-event-ev (car (history-otevs (hstate-h x)))))
-                                    (tm (des-state-tm y))
-                                    (mem (des-state-mem y))
+                                    (tm (aeps-state-tm y))
+                                    (mem (aeps-state-mem y))
                                     (mem-equiv (history-mem (hstate-h x)))))
                    :do-not '(eliminate-destructors)))))
 
- (local (defthm lwfsk2f-C-2
+ (local (defthm rlwfsk2c-O-2
           (implies (and (good-hstatep x)
-                        (good-des-statep y)
-                        (C x y)
+                        (good-aeps-statep y)
+                        (O x y)
                         (not (B x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (des-state-equal (R x) (C-witness-y-tm=x-tm x y)))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (aeps-state-equal (R x) (O-witness-y-tm=x-tm x y)))
           :hints (("Goal" :in-theory (disable
-                                      good-des-statep-definition-rule
+                                      good-aeps-statep-definition-rule
                                       good-hstatep-definition-rule
-                                      c-witness-y-tm=x-tm-definition-rule
-                                      c-definition-rule
+                                      O-witness-y-tm=x-tm-definition-rule
+                                      O-definition-rule
                                       B-definition-rule
                                       r-definition-rule
-                                      C-implies-good-state-fw)
-                   :use ((:instance C-implies-good-state-fw))))))
+                                      O-implies-good-state-fw)
+                   :use ((:instance O-implies-good-state-fw))))))
 
- (local (defthm lwfsk2f-C-3
-          (implies (and (C x y)
+ (local (defthm rlwfsk2c-O-3
+          (implies (and (O x y)
                         (not (B x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (B x (C-witness-y-tm=x-tm x y)))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (B x (O-witness-y-tm=x-tm x y)))
           :hints (("Goal"
-                   :use ((:instance lwfsk2f-C-1)
-                         (:instance lwfsk2f-C-2)
+                   :use ((:instance rlwfsk2c-O-1)
+                         (:instance rlwfsk2c-O-2)
                          (:instance B-definition-rule
                                     (s x)
-                                    (w (C-witness-y-tm=x-tm x y))))
-                   :in-theory (disable des-state-equal-definition-rule
-                                       good-des-statep-definition-rule
+                                    (w (O-witness-y-tm=x-tm x y))))
+                   :in-theory (disable aeps-state-equal-definition-rule
+                                       good-aeps-statep-definition-rule
                                        good-hstatep-definition-rule
-                                       c-witness-y-tm=x-tm-definition-rule
-                                       c-definition-rule
+                                       O-witness-y-tm=x-tm-definition-rule
+                                       O-definition-rule
                                        b-definition-rule
-                                       r-definition-rule lwfsk2f-C-2
-                                       lwfsk2f-C-1)))))
+                                       r-definition-rule rlwfsk2c-O-2
+                                       rlwfsk2c-O-1)))))
 
 
- (local (defthm lwfsk2f-C-4
-          (implies (and (C x y)
+ (local (defthm rlwfsk2c-O-4
+          (implies (and (O x y)
                         (not (B x y))
-                        (equal (des-state-tm y) (hstate-tm x)))
-                   (C x (C-witness-y-tm=x-tm x y)))
+                        (equal (aeps-state-tm y) (hstate-tm x)))
+                   (O x (O-witness-y-tm=x-tm x y)))
           :hints (("Goal"
-                   :use ((:instance lwfsk2f-C-1)
-                         (:instance lwfsk2f-C-3)
-                         (:instance C-definition-rule
+                   :use ((:instance rlwfsk2c-O-1)
+                         (:instance rlwfsk2c-O-3)
+                         (:instance O-definition-rule
                                     (x x)
-                                    (y (C-witness-y-tm=x-tm x y))))
-                   :in-theory (disable des-state-equal-definition-rule
-                                       good-des-statep-definition-rule
+                                    (y (O-witness-y-tm=x-tm x y))))
+                   :in-theory (disable aeps-state-equal-definition-rule
+                                       good-aeps-statep-definition-rule
                                        good-hstatep-definition-rule
-                                       c-witness-y-tm=x-tm-definition-rule
-                                       c-definition-rule
+                                       O-witness-y-tm=x-tm-definition-rule
+                                       O-definition-rule
                                        b-definition-rule
-                                       r-definition-rule lwfsk2f-C-2
-                                       lwfsk2f-C-1)))))
+                                       r-definition-rule rlwfsk2c-O-2
+                                       rlwfsk2c-O-1)))))
 
- (defthm lwfsk2f-C-5
-   (implies (and (C x y)
+ (defthm rlwfsk2c-O-5
+   (implies (and (O x y)
                  (not (B x y))
-                 (equal (des-state-tm y) (hstate-tm x)))
-            (and (C x (C-witness-y-tm=x-tm x y))
-                 (good-des-statep (C-witness-y-tm=x-tm x y))
-                 (spec-transp y (C-witness-y-tm=x-tm x y))
-                 (< (rankls (C-witness-y-tm=x-tm x y) x)
+                 (equal (aeps-state-tm y) (hstate-tm x)))
+            (and (O x (O-witness-y-tm=x-tm x y))
+                 (good-aeps-statep (O-witness-y-tm=x-tm x y))
+                 (aeps-transp y (O-witness-y-tm=x-tm x y))
+                 (< (rankls (O-witness-y-tm=x-tm x y) x)
                     (rankls y x))))
    :hints (("Goal"
-            :use ((:instance lwfsk2f-C-1)
-                  (:instance lwfsk2f-C-4)
+            :use ((:instance rlwfsk2c-O-1)
+                  (:instance rlwfsk2c-O-4)
                   (:instance l4)
-                  (:instance lwfsk2f-spec-transp))
-                  :in-theory (disable des-state-equal-definition-rule
-                                      good-des-statep-definition-rule
+                  (:instance rlwfsk2c-aeps-transp))
+                  :in-theory (disable aeps-state-equal-definition-rule
+                                      good-aeps-statep-definition-rule
                                       good-hstatep-definition-rule
-                                      c-witness-y-tm=x-tm-definition-rule
-                                      c-definition-rule
+                                      O-witness-y-tm=x-tm-definition-rule
+                                      O-definition-rule
                                       b-definition-rule
-                                      r-definition-rule lwfsk2f-C-4
-                                      spec-transp-definition-rule
-                                      lwfsk2f-C-1 lwfsk2f-C-2
-                                      lwfsk2f-C-3
+                                      r-definition-rule rlwfsk2c-O-4
+                                      aeps-transp-definition-rule
+                                      rlwfsk2c-O-1 rlwfsk2c-O-2
+                                      rlwfsk2c-O-3
                                       ACL2::DEFAULT-LESS-THAN-1
                                       ACL2::DEFAULT-LESS-THAN-2
-                                      good-des-statep-contract
+                                      good-aeps-statep-contract
                                       good-hstatep-contract
                                       (:rewrite events-at-tm-l-set-equiv)))))
 
  (defthmd case-exhaustive
    (implies (and (good-hstatep x)
-                 (good-des-statep y)
-                 (C x y)
+                 (good-aeps-statep y)
+                 (O x y)
                  (not (B x y)))
-            (<= (des-state-tm y) (hstate-tm x))))
+            (<= (aeps-state-tm y) (hstate-tm x))))
   
- (defthmd lwfsk2f-C
-   (let ((z (if (< (des-state-tm y) (hstate-tm x))
-                (C-witness-y-tm<x-tm y)
-              (c-witness-y-tm=x-tm x y)))) 
+ (defthmd rlwfsk2c-C
+   (let ((z (if (< (aeps-state-tm y) (hstate-tm x))
+                (O-witness-y-tm<x-tm y)
+              (O-witness-y-tm=x-tm x y)))) 
      (implies (and (good-hstatep x)
-                   (good-des-statep y)
-                   (C x y)
+                   (good-aeps-statep y)
+                   (O x y)
                    (not (B x y)))
-              (and (C x z)
-                   (good-des-statep z)
-                   (spec-transp y z)
+              (and (O x z)
+                   (good-aeps-statep z)
+                   (aeps-transp y z)
                    (< (rankls z x) (rankls y x)))))
    :hints (("Goal"
-            :cases ((< (des-state-tm y) (hstate-tm x))
-                    (= (des-state-tm y) (hstate-tm x)))
+            :cases ((< (aeps-state-tm y) (hstate-tm x))
+                    (= (aeps-state-tm y) (hstate-tm x)))
             :use ((:instance case-exhaustive)
-                  (:instance lwfsk2f-C-5)
-                  (:instance lwfsk2f-1))
-            :in-theory (disable des-state-equal-definition-rule
-                                good-des-statep-definition-rule
+                  (:instance rlwfsk2c-O-5)
+                  (:instance rlwfsk2c-1))
+            :in-theory (disable aeps-state-equal-definition-rule
+                                good-aeps-statep-definition-rule
                                 good-hstatep-definition-rule
-                                c-witness-y-tm=x-tm-definition-rule
-                                c-witness-y-tm<x-tm-definition-rule
-                                c-definition-rule
+                                O-witness-y-tm=x-tm-definition-rule
+                                O-witness-y-tm<x-tm-definition-rule
+                                O-definition-rule
                                 b-definition-rule
-                                r-definition-rule lwfsk2f-1
+                                r-definition-rule rlwfsk2c-1
                                 case-exhaustive
                                 ACL2::DEFAULT-LESS-THAN-1
                                 ACL2::DEFAULT-LESS-THAN-2
-                                good-des-statep-contract
+                                good-aeps-statep-contract
                                 good-hstatep-contract
-                                spec-transp-definition-rule
+                                aeps-transp-definition-rule
                                 rankls-definition-rule
                                 (:rewrite events-at-tm-l-set-equiv)
-                                ;; c-implies-v-good-des-state
-                                lwfsk2f-C-5))))
+                                ;; c-implies-v-good-aeps-state
+                                rlwfsk2c-O-5))))
  
- (local (in-theory (disable des-state-equal-definition-rule
-                            good-des-statep-definition-rule
+ (local (in-theory (disable aeps-state-equal-definition-rule
+                            good-aeps-statep-definition-rule
                             good-hstatep-definition-rule
-                            c-witness-y-tm=x-tm-definition-rule
-                            c-witness-y-tm<x-tm-definition-rule
-                            c-definition-rule b-definition-rule
-                            r-definition-rule lwfsk2f-1 case-exhaustive
+                            O-witness-y-tm=x-tm-definition-rule
+                            O-witness-y-tm<x-tm-definition-rule
+                            O-definition-rule b-definition-rule
+                            r-definition-rule rlwfsk2c-1 case-exhaustive
                             ACL2::DEFAULT-LESS-THAN-1
                             ACL2::DEFAULT-LESS-THAN-2
-                            good-des-statep-contract good-hstatep-contract
-                            spec-transp-definition-rule
+                            good-aeps-statep-contract good-hstatep-contract
+                            aeps-transp-definition-rule
                             rankls-definition-rule
-                            ;; c-implies-v-good-des-state
-                            lwfsk2f-C lwfsk2f
-                            lwfsk2f-suff)))
+                            ;; c-implies-v-good-aeps-state
+                            rlwfsk2c-C rlwfsk2c
+                            rlwfsk2c-suff)))
 
  
- (defthmd C-is-good
-   (implies (and (C x y)
+ (defthmd O-is-good
+   (implies (and (O x y)
                  (not (B x y)))
-            (lwfsk2f x y))
+            (rlwfsk2c x y))
    :hints (("Goal"
-            :cases ((< (des-state-tm y) (hstate-tm x))
-                    (= (des-state-tm y) (hstate-tm x)))
+            :cases ((< (aeps-state-tm y) (hstate-tm x))
+                    (= (aeps-state-tm y) (hstate-tm x)))
             :use ((:instance case-exhaustive)
-                  (:instance lwfsk2f-C)
-                  (:instance lwfsk2f-suff (z (c-witness-y-tm=x-tm x y)))
-                  (:instance lwfsk2f-suff (z (c-witness-y-tm<x-tm y)))))))
- )
+                  (:instance rlwfsk2c-C)
+                  (:instance rlwfsk2c-suff (z (O-witness-y-tm=x-tm x y)))
+                  (:instance rlwfsk2c-suff (z (O-witness-y-tm<x-tm y)))))))
+ )#|ACL2s-ToDo-Line|#
